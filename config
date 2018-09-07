@@ -2,3 +2,6 @@
 	repositoryformatversion = 0
 	filemode = true
 	bare = true
+[user]
+	name = HZagorov
+	email = zagorovhz@gmail.com
