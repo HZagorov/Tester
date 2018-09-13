@@ -16,18 +16,14 @@
 #include <linux/i2c-dev.h>
 #include <wiringPi.h>
 
-//proggramin - OK
-//----------------
-//GSM setting - OK
-//Systen LED - FAIL
 
-//da se resetva loggera pri krai na testa?
 int main() {
 	int fd;
 	int i2c_fd;
 	int address = 0x50;
 	time_t start, end;
 	double dif;
+
 	//comparison strings
 	char fct_str[] = "written successfully";
 	char bd_str[] = "Successfully changed baud rate";
@@ -70,13 +66,17 @@ int main() {
 	printf("TEST BEGIN");
 	printf("\033[0m");
 	printf("=============\n\n");
-	time(&start);	
-	if (flash_logger(fd, flash_str) || fs_write(fd) ||
+	time(&start);
+
+	if ( /* flash_logger(fd, flash_str) || fs_write(fd) ||
 		mock_factory_write(fd, fct_str) || led_test(fd) ||
 		gsm_test(fd, bd_str, ping_str, i2c_fd) ||
-	       	inputs_test(fd, i2c_fd) ||
+	       	inputs_test(fd, i2c_fd) ||*/
 	      	factory_write(fd, fct_str))
 	{
+		printf("\033[1;31m");
+		printf("Test failed\n");
+		printf("\033[0;m");
 		close(fd);
 		return -1;
 	}
@@ -232,8 +232,7 @@ int fs_write(int fd) {
 		{ "mount -t vfat /dev/mtdblock0 /mnt\n" },
 		{ "mkfatfs /dev/ifbank2r\n" },
 		{ "mount -t vfat /dev/ifbank2r /rsvd\n" }
-	};
-	
+	};	
 	write_to_logger(fd, "umount /mnt\n");
 	write_to_logger(fd, "umount /rsvd\n");	
 	for (int i = 0; i < 4; i++){
@@ -262,13 +261,17 @@ int mock_factory_write(int fd, char fct_str[]) {
 int factory_write(int fd, char fct_str[]) {
 	
 	printf("\n---------------------\n");
-	char buf[256];
-	char ser_num[10], hard_rev[20], prod_num[50];
+	char ser_num[100] = {0} , hard_rev[100], prod_num[100];
 	char fct_cmd[255];
 
 	//factory input parameters	
-	printf("Enter serial number: ");
-	scanf("%s", ser_num);
+	do {
+		if (*ser_num)
+		printf("Serial number must be less than 10 characters long\n");
+		printf("Enter serial number: ");
+		scanf("%s", ser_num);
+	} while (strlen(ser_num) > 10);
+
 	printf("Enter hardware revision: ");
 	scanf("%s", hard_rev);
 	printf("Enter product number: ");
@@ -277,15 +280,17 @@ int factory_write(int fd, char fct_str[]) {
 			ser_num, hard_rev, prod_num);
 	
 	if ( !write_to_logger(fd, fct_cmd) && 
-			!read_from_logger(fd, fct_str, 1, 1000000 ) &&
+			!read_from_logger(fd, fct_str, 1, 2000000 ) &&
 			!write_to_logger(fd, "factory -c\n") &&
-			!read_from_logger(fd, fct_str, 1, 1000000))
+			!read_from_logger(fd, fct_str, 1, 2000000))
 	{
 		printf("Factory config successfully written\n");
 		return 0;	
 	}
 	else {
+		printf("\033[0;31m");
 		printf("Factory config write failed\n");
+		printf("\033[0m");
 		return -1;
 	}
 }
@@ -311,8 +316,7 @@ int led_test(int fd) {
 		printf("FAIL\n");
 		printf("\033[0m");
 		write_to_logger(fd, "gpio -o 0 /dev/gpout_systemstatusled\n");
-		printf("Test failed\n");
-		return -1;
+		return 0;
 	}
 }
 
@@ -330,7 +334,7 @@ int measure_voltage(int fd, int i2c_fd) {
 	       	return 0;
 	}
 	else {
-		printf("VCCGSM is not set. Test ended\n");
+		printf("VCCGSM is not set\n");
 		write_to_logger(fd, "reset\n");
 		return -1;
 	}
@@ -338,9 +342,7 @@ int measure_voltage(int fd, int i2c_fd) {
 
 int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){	
 	printf("\n---------------------\n");
-	char buf[256];
-	char c;
-	char print[] = "GSM test -    ";
+	char test_msg[] = "GSM test -    ";
 	printf("Setting GSM module, please wait 1 minute...\n");
 	if (!write_to_logger(fd, "modem_config -d /dev/ttyS0 -g 1 -ar 9600\n")
 		        //&& !read_from_logger(fd, "nsh", 1, 1000000)	
@@ -367,7 +369,7 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){
 	write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n");
 	printf("Pinging host 10.210.9.3 ...\n");
 	write_to_logger(fd, "qftpc -i 10.210.9.3\n");
-	write(1, print, sizeof(print)); 
+	write(1, test_msg, sizeof(test_msg)); 
 	if (!read_from_logger(fd, ping_str, 1, 30000000)) {
 		printf("\033[0;32m");
 		printf("OK\n");
@@ -380,7 +382,7 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){
 		printf("\033[0m");
 	//	printf("Ping failed. Test ended\n");
 		write_to_logger(fd, "reset\n");
-		return -1;
+		return 1;
 	}
 
 }
@@ -448,6 +450,7 @@ int generate_pulses(int fd, int i2c_fd) {
 			printf("\033[0;31m");
 			printf("FAIL\n");
 			printf("\033[0m");
+			write_to_logger(fd, "reset\n");
 		//	printf("Pulse test failed\n");
 			return -1;
 		}		
@@ -458,7 +461,6 @@ int inputs_test(int fd, int i2c_fd) {
 	printf("\n---------------------\n");
 	inputs_config(fd);
 	return generate_pulses(fd, i2c_fd);
-
 }
 
 int soft_rev_check(int fd) {
