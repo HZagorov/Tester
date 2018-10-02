@@ -3,6 +3,7 @@ int write_to_logger(int fd, char str[]);
 int read_from_logger(int fd, char comp_str[], int flush, int timeout);
 void flush(int fd);
 int start();
+void pi_setup();
 int flash_check(int fd, char flash_str[]);
 int flash_logger(int fd, char flash_str[]);
 int fs_write(int fd);
@@ -15,4 +16,6 @@ void inputs_config(int fd);
 int generate_pulses(int fd, int i2c_fd);
 int inputs_test(int fd, int i2c_fd);
 int soft_rev_check(int fd);
-
+void power_off();
+void print_ok();
+void print_fail();

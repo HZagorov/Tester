@@ -9,18 +9,18 @@
 #include <math.h>
 #include "test.h"
 
-
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
 #include <wiringPi.h>
 
+#define CAP 17
+#define JMP 24
+#define PWR 27
 
 int main() {
-	int fd;
-	int i2c_fd;
-	int address = 0x50;
+	int fd, i2c_fd, address = 0x50;
 	time_t start, end;
 	double dif;
 
@@ -28,7 +28,7 @@ int main() {
 	char fct_str[] = "written successfully";
 	char bd_str[] = "Successfully changed baud rate";
 	char ping_str[] = "Successfully ping host";
-	char flash_str[] = "NuttX-0.4.25";
+	char flash_str[] = "NuttX-0.4.26";
 	
 	//open serial port 
 	fd = open ("/dev/ttyS0", O_RDWR | O_NOCTTY  ); // O_NDELAY);
@@ -54,9 +54,7 @@ int main() {
 	options.c_lflag &= ~( ECHO | ECHOE | ECHOK | ECHONL |IEXTEN | ISIG);
 	options.c_cflag = B38400 | CS8 |CLOCAL| CREAD;
 	tcsetattr (fd,TCSANOW, &options);
-		
-	system ("gpio edge 17 rising");
-	wiringPiSetupSys();
+	
 
 //	waitForInterrupt(17, -1);
 //	for (; ;){
@@ -68,33 +66,38 @@ int main() {
 	printf("=============\n\n");
 	time(&start);
 
-	if ( /* flash_logger(fd, flash_str) || fs_write(fd) ||
+	pi_setup();	
+	if ( flash_logger(fd, flash_str) || fs_write(fd) ||
 		mock_factory_write(fd, fct_str) || led_test(fd) ||
 		gsm_test(fd, bd_str, ping_str, i2c_fd) ||
-	       	inputs_test(fd, i2c_fd) ||*/
-	      	factory_write(fd, fct_str))
+	       	inputs_test(fd, i2c_fd) /*||
+	      	factory_write(fd, fct_str)*/ )
 	{
+		power_off();
+		close(fd);
 		printf("\033[1;31m");
 		printf("Test failed\n");
 		printf("\033[0;m");
-		close(fd);
 		return -1;
 	}
 	if (soft_rev_check(fd))
-	       printf("Software revision doesn't match, must be 0.4.25\n");
+	       printf("Software revision doesn't match, must be 0.4.26\n");
 
+
+	power_off();
+	close (fd);
 
 	time(&end);
 	dif = difftime(end, start);
 	int seconds = (int)dif % 60;
 	int minutes = (dif - seconds) / 60;
-
 	printf("\n---------------------\n");
 	printf("\033[1;32m");
 	printf("Test ended successfully!\n");
 	printf("\033[0m");
 	printf("Test time = %d.%.2dm\n", minutes, seconds);
-	close (fd);	
+	
+	return 0;
 }
 
 int compare_strings(char buf[], char compstr[]) {
@@ -155,6 +158,16 @@ void flush(int fd){
 	read_from_logger(fd, NULL, 1, 1000000 );
 }
 
+void pi_setup(){
+	system ("gpio edge 17 rising");
+	wiringPiSetupGpio();
+	pinMode(JMP, OUTPUT);	
+	pinMode(PWR, OUTPUT);
+	pinMode(CAP, OUTPUT);
+	digitalWrite(PWR,HIGH);
+	digitalWrite(JMP, HIGH);
+}
+
 int start_test() {
 	for (; ;) 
 	{	
@@ -167,20 +180,16 @@ int start_test() {
 
 int flash_check(int fd, char flash_str[]){
 	if (!read_from_logger(fd, flash_str, 1, 15000000) &&
-		!write_to_logger(fd, "md5c -f /dev/ifbank1 -e 255016\n")&&
-		!read_from_logger(fd, "bc46e19c590d79455cc1d9c54967a862", 1, 5000000)) 
+		!write_to_logger(fd, "md5c -f /dev/ifbank1 -e 257272\n")&&
+		!read_from_logger(fd, "404c2016a63aa570ceb1a8c338514f0e", 1, 5000000)) 
 	{
 		//printf("Programming successful\n");
-		printf("\033[0;32m");
-		printf("OK\n");
-		printf("\033[0m");
+		print_ok();
 		return 0;
 	}
 	else {
 	//	printf("Programming failed\n");
-		printf("\033[0;31m");
-		printf("FAIL\n");
-		printf("\033[0m");
+		print_fail();
 		return -1;
 	}
 }
@@ -191,7 +200,7 @@ int flash_logger(int fd, char flash_str[]){
 	unsigned char buf[4096];
 	char print[] = "Programming logger -    ";
 	write(1, print, sizeof(print)); 
-	src_fd = open("/home/pi/sourceCodes/DL-MINI-BAT36-D2-3G-VB1.0-0.4.25.bin", O_RDONLY);
+	src_fd = open("/home/pi/sourceCodes/test/DL-MINI-BAT36-D2-3G-VB1.0-0.4.26.bin", O_RDONLY);
 	dst_fd = open("/media/pi/NODE_L476RG/image.bin", O_CREAT | O_WRONLY);
 
 	if (src_fd == -1 || dst_fd == -1) perror("Unable to open.\n ");
@@ -213,7 +222,7 @@ int flash_logger(int fd, char flash_str[]){
 			break;
 		}
 	}
-	printf("\033[1;31m");
+	printf("\033[0;31m");
 	printf("Programming failed\n");
 	printf("\033[0;m");
 	close(src_fd);
@@ -304,17 +313,13 @@ int led_test(int fd) {
 	scanf(" %c", &response);
 	printf("LED test -    ");
 	if (response == 'y' || response == 'Y' ) {
-		printf("\033[0;32m");
-		printf("OK\n");
-		printf("\033[0m");
+		print_ok();
 	//	printf("Stopping system LED\n");
 		write_to_logger(fd, "gpio -o 0 /dev/gpout_systemstatusled\n");
 		flush(fd);
 		return 0;	
 	} else {
-		printf("\033[0;31m");
-		printf("FAIL\n");
-		printf("\033[0m");
+		print_fail();
 		write_to_logger(fd, "gpio -o 0 /dev/gpout_systemstatusled\n");
 		return 0;
 	}
@@ -323,18 +328,19 @@ int led_test(int fd) {
 int measure_voltage(int fd, int i2c_fd) {
 	char buf[20] = "Measure";
 	char response[10] = {0};
-	
+	int voltage;
+
 	write(i2c_fd, buf, strlen(buf));
 	sleep(1);
 	read(i2c_fd, response, 7);
-	int voltage = atoi(response);
+	voltage = atoi(response);
 
 	if (voltage > 3600) {
 		printf("VCCGSM value is set - %d mV\n", voltage);
 	       	return 0;
 	}
 	else {
-		printf("VCCGSM is not set\n");
+		printf("VCCGSM is not set - %d mV\n", voltage);
 		write_to_logger(fd, "reset\n");
 		return -1;
 	}
@@ -344,7 +350,7 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){
 	printf("\n---------------------\n");
 	char test_msg[] = "GSM test -    ";
 	printf("Setting GSM module, please wait 1 minute...\n");
-	if (!write_to_logger(fd, "modem_config -d /dev/ttyS0 -g 1 -ar 9600\n")
+	if (!write_to_logger(fd, "modem_config -d /dev/ttyS0 -g 1 -ar 9600 -e 15 -b 20\n")
 		        //&& !read_from_logger(fd, "nsh", 1, 1000000)	
 		&& !read_from_logger(fd, bd_str, 1, 60000000))
 		printf("Baud rate changed successfully\n");
@@ -368,18 +374,14 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){
 	write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n");
 	write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n");
 	printf("Pinging host 10.210.9.3 ...\n");
-	write_to_logger(fd, "qftpc -i 10.210.9.3\n");
+	write_to_logger(fd, "qftpc -e 15 -b 20 -i 10.210.9.3\n");
 	write(1, test_msg, sizeof(test_msg)); 
 	if (!read_from_logger(fd, ping_str, 1, 30000000)) {
-		printf("\033[0;32m");
-		printf("OK\n");
-		printf("\033[0m");
+		print_ok();
 	//	printf("Ping successful\n");
 		return 0;
 	} else {
-		printf("\033[0;31m");
-		printf("FAIL\n");
-		printf("\033[0m");
+		print_fail();
 	//	printf("Ping failed. Test ended\n");
 		write_to_logger(fd, "reset\n");
 		return 1;
@@ -438,24 +440,20 @@ int generate_pulses(int fd, int i2c_fd) {
 				!read_from_logger(fd, "96", 1, 500000) &&
 				!write_to_logger(fd, "cat /dev/lptim2\n") &&
 				!read_from_logger(fd, "95", 1, 500000))
-		{
-			printf("\033[0;32m");
-			printf("OK\n");
-			printf("\033[0m");
+		{	print_ok();
 		//	printf("Pulse test successful, resetting device\n");
 			write_to_logger(fd,"reset\n");
 				flush(fd);
 			return 0;				
 		} else {
-			printf("\033[0;31m");
-			printf("FAIL\n");
-			printf("\033[0m");
+			print_fail();
 			write_to_logger(fd, "reset\n");
 		//	printf("Pulse test failed\n");
 			return -1;
 		}		
 	}	
 }
+
 
 int inputs_test(int fd, int i2c_fd) {
 	printf("\n---------------------\n");
@@ -465,6 +463,28 @@ int inputs_test(int fd, int i2c_fd) {
 
 int soft_rev_check(int fd) {
 	write_to_logger(fd, "uname -a\n");
-	return read_from_logger(fd, "0.4.25",1 , 500000);
+	return read_from_logger(fd, "0.4.26",1 , 500000);
 }
+
+void print_ok() {	
+	printf("\033[0;32m");
+	printf("OK\n");
+	printf("\033[0m");
+}
+
+void print_fail() {
+	printf("\033[0;31m");
+	printf("FAIL\n");
+	printf("\033[0m");
+}	
+
+void power_off(){
+	digitalWrite(PWR, LOW);
+	digitalWrite(JMP, LOW);
+	digitalWrite(CAP, HIGH);
+	printf("\nWait 15 seconds for cap to discharge\n");
+	sleep(15);
+	digitalWrite(CAP, LOW);
+}
+
 
