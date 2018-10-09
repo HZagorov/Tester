@@ -16,6 +16,7 @@
 #include <wiringPi.h>
 
 #define CAP 17
+#define REED 22
 #define JMP 24
 #define PWR 27
 
@@ -28,7 +29,7 @@ int main() {
 	char fct_str[] = "written successfully";
 	char bd_str[] = "Successfully changed baud rate";
 	char ping_str[] = "Successfully ping host";
-	char flash_str[] = "NuttX-0.4.26";
+	char flash_str[] = "NuttX-0.4.27";
 	
 	setup();
 	//open serial port 
@@ -68,11 +69,11 @@ int main() {
 
 
 
-	if ( flash_logger(fd, flash_str) || fs_write(fd) ||
+	if ( flash_logger(fd, flash_str) ||  fs_write(fd) ||
 		mock_factory_write(fd, fct_str) || led_test(fd) ||
 		gsm_test(fd, bd_str, ping_str, i2c_fd) ||
 	       	inputs_test(fd, i2c_fd) ||
-	      	factory_write(fd, fct_str) )
+	      	factory_write(fd, fct_str)  )
 	{
 		power_off(fd);
 		printf("\033[1;31m");
@@ -81,7 +82,7 @@ int main() {
 		return -1;
 	}
 	if (soft_rev_check(fd))
-	       printf("Software revision doesn't match, must be 0.4.26\n");
+	       printf("\nSoftware revision doesn't match, must be 0.4.27\n");
 
 
 	power_off(fd);
@@ -106,8 +107,9 @@ void setup(){
 	if (open("/media/pi/NODE_L476RG", O_RDONLY) < 0 ) {
 		system("sudo /home/pi/sourceCodes/hub-ctrl -h 0 -P 2 -p 1");
 		sleep(3);
-	}
+	} else sleep(1);
 	pinMode(JMP, OUTPUT);
+	pinMode(REED, OUTPUT);
 	pinMode(CAP, OUTPUT);
 	digitalWrite(JMP, HIGH);
 }
@@ -180,9 +182,9 @@ int start_test() {
 }
 
 int flash_check(int fd, char flash_str[]){
-	if (!read_from_logger(fd, flash_str, 1, 15000000) &&
-		!write_to_logger(fd, "md5c -f /dev/ifbank1 -e 257272\n")&&
-		!read_from_logger(fd, "404c2016a63aa570ceb1a8c338514f0e", 1, 5000000)) 
+	if (!read_from_logger(fd, flash_str, 0, 15000000) &&
+		!write_to_logger(fd, "md5c -f /dev/ifbank1 -e 264996\n")&&
+		!read_from_logger(fd, "073eecc8ecf31fe57f9862bc74a1e86b", 0, 10000000)) 
 	{
 		//printf("Programming successful\n");
 		print_ok();
@@ -191,6 +193,7 @@ int flash_check(int fd, char flash_str[]){
 	else {
 	//	printf("Programming failed\n");
 		print_fail();
+		printf("Flash check failed\n");
 		return -1;
 	}
 }
@@ -202,7 +205,7 @@ int flash_logger(int fd, char flash_str[]){
 	char print[] = "Programming logger -    ";
 	write(1, print, sizeof(print)); 
 
-	src_fd = open("/home/pi/sourceCodes/test/DL-MINI-BAT36-D2-3G-VB1.0-0.4.26.bin", O_RDONLY);		
+	src_fd = open("/home/pi/sourceCodes/test/DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin", O_RDONLY);		
 	dst_fd = open("/media/pi/NODE_L476RG/image.bin", O_CREAT | O_WRONLY);
 	if (src_fd == -1 || dst_fd == -1) perror("Unable to open.\n ");
 	while (1) {
@@ -258,13 +261,14 @@ int fs_write(int fd) {
 int mock_factory_write(int fd, char fct_str[]) {
 	char mock_fcm[] = "factory -s 1801001 -r VB1.0 -p DL-MINI-BAT36-D2-3G -f\n"; 
 	if (write_to_logger(fd, mock_fcm) ||
-		read_from_logger(fd, fct_str, 1, 1000000) ||
+		read_from_logger(fd, fct_str, 0, 5000000) ||
 		write_to_logger(fd, "factory -c\n") ||
-		read_from_logger(fd, fct_str, 1, 1000000))
+		read_from_logger(fd, fct_str, 0, 5000000))
 	{
 		printf("\033[0;31m");
 		printf("Mock factory config write failed\n");
-		printf("\033[0;m]");
+		//printf("Probably DUT is in sleep mode\n");
+		printf("\033[0;m");
 		return -1;
 	}
 	return 0;
@@ -324,6 +328,7 @@ int led_test(int fd) {
 		print_fail();
 		write_to_logger(fd, "gpio -o 0 /dev/gpout_systemstatusled\n");
 	}
+	flush(fd);
 	return 0;
 }
 
@@ -377,7 +382,7 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){
 	printf("Pinging host 10.210.9.3 ...\n");
 	write_to_logger(fd, "qftpc -e 15 -b 20 -i 10.210.9.3\n");
 	write(1, test_msg, sizeof(test_msg)); 
-	if (!read_from_logger(fd, ping_str, 1, 30000000)) {
+	if (!read_from_logger(fd, ping_str, 0, 60000000)) {
 		print_ok();
 	//	printf("Ping successful\n");
 		return 0;
@@ -425,6 +430,33 @@ void inputs_config(int fd){
 	printf("Inputs config written\n");
 }
 
+int reed_test(int fd) {
+	printf("\n---------------------\n");
+	char print[] = "Reed test -    ";
+	char alarm_str[] ="AT+QPOWD=1";
+	char reed_str[] = "Reed clicked for 3s.";
+	printf("Wait for DUT to enter sleep mode...\n");
+	write(1, print, sizeof(print));
+	if (!read_from_logger(fd, alarm_str, 1, 100000000)){
+	//	printf("Turning magnet on\n");
+		digitalWrite(22, HIGH);
+		if (!read_from_logger(fd, reed_str, 1, 10000000)){
+			print_ok();
+			write_to_logger(fd, "reset\n");
+			return 0;
+		} else {
+			print_fail();
+			write_to_logger(fd, "reset\n");
+			return -1;
+		}
+	} else {
+		print_fail();
+		write_to_logger(fd, "reset\n");
+		return -1;	
+	}
+   
+}
+
 int generate_pulses(int fd, int i2c_fd) {
 	char buf[20] = "Generate";
 	char alarm_str[] = "Alarm Ampule-Reed received.";
@@ -436,35 +468,38 @@ int generate_pulses(int fd, int i2c_fd) {
 	if (!read_from_logger(fd, alarm_str, 1, 2000000)){
 		write(i2c_fd, buf, strlen(buf));
 		read_from_logger(fd, NULL, 1, 1500000);
-		
+			
 		if (!write_to_logger(fd, "cat /dev/lptim1\n") &&
 				!read_from_logger(fd, "96", 1, 500000) &&
 				!write_to_logger(fd, "cat /dev/lptim2\n") &&
 				!read_from_logger(fd, "95", 1, 500000))
 		{	print_ok();
 		//	printf("Pulse test successful, resetting device\n");
-			write_to_logger(fd,"reset\n");
+		//	write_to_logger(fd,"reset\n");
 			flush(fd);
 			return 0;				
 		} else {
 			print_fail();
-			write_to_logger(fd, "reset\n");
+		//	write_to_logger(fd, "reset\n");
 		//	printf("Pulse test failed\n");
 			return -1;
 		}		
-	}	
+	 }
+	 print_fail();
+       	 return -1;			
 }
 
 
 int inputs_test(int fd, int i2c_fd) {
 	printf("\n---------------------\n");
 	inputs_config(fd);
-	return generate_pulses(fd, i2c_fd);
+	return (generate_pulses(fd, i2c_fd) 
+		|| reed_test(fd));
 }
 
 int soft_rev_check(int fd) {
 	write_to_logger(fd, "uname -a\n");
-	return read_from_logger(fd, "0.4.26",1 , 500000);
+	return read_from_logger(fd, "0.4.27",1 , 500000);
 }
 
 void print_ok() {	
@@ -483,6 +518,7 @@ void power_off(int fd){
 	close(fd);
 	digitalWrite(PWR, LOW);
 	digitalWrite(JMP, LOW);
+	digitalWrite(REED, LOW);
 	digitalWrite(CAP, HIGH);
 	printf("\nWait 15 seconds for cap to discharge\n");
 	sleep(15);
