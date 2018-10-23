@@ -15,6 +15,8 @@
 #include <linux/i2c-dev.h>
 #include <wiringPi.h>
 
+#define PUPIN 9
+#define NPWR 11
 #define CAP 17
 #define REED 22
 #define JMP 24
@@ -69,11 +71,11 @@ int main() {
 
 
 
-	if ( flash_logger(fd, flash_str) ||  fs_write(fd) ||
+	if (flash_logger(fd, flash_str) ||  fs_write(fd) ||
 		mock_factory_write(fd, fct_str) || led_test(fd) ||
 		gsm_test(fd, bd_str, ping_str, i2c_fd) ||
 	       	inputs_test(fd, i2c_fd) ||
-	      	factory_write(fd, fct_str)  )
+	      	factory_write(fd, fct_str) )
 	{
 		power_off(fd);
 		printf("\033[1;31m");
@@ -104,14 +106,19 @@ void setup(){
 	wiringPiSetupGpio();
 	pinMode(PWR, OUTPUT);	
 	digitalWrite(PWR,HIGH);
-	if (open("/media/pi/NODE_L476RG", O_RDONLY) < 0 ) {
-		system("sudo /home/pi/sourceCodes/hub-ctrl -h 0 -P 2 -p 1");
-		sleep(3);
-	} else sleep(1);
 	pinMode(JMP, OUTPUT);
 	pinMode(REED, OUTPUT);
 	pinMode(CAP, OUTPUT);
+	digitalWrite(CAP, LOW);
 	digitalWrite(JMP, HIGH);
+	if (open("/media/pi/NODE_L476RG", O_RDONLY) < 0 ) {
+		reset_nucleo(1);
+	} 
+	if (open("/media/pi/NODE_L476RG/FAIL.TXT",O_RDONLY)> 0)
+	{
+		reset_nucleo(1);
+	}
+
 }
 
 int compare_strings(char buf[], char compstr[]) {
@@ -156,8 +163,11 @@ int read_from_logger (int fd, char comp_str[], int flush, int timeout){
 			if (!flush) printf("%s", buf);
 			if (comp_str != NULL)
 			{	
-				if (!compare_strings(buf, comp_str))
+				if (!compare_strings(buf, comp_str)){
+					char *pch = strstr(comp_str, "ERROR UMTS:");
+					if (pch) strcpy(comp_str, buf);
 					return 0;
+				}
 			}
 		}
 		else { 
@@ -182,9 +192,15 @@ int start_test() {
 }
 
 int flash_check(int fd, char flash_str[]){
-	if (!read_from_logger(fd, flash_str, 0, 15000000) &&
-		!write_to_logger(fd, "md5c -f /dev/ifbank1 -e 264996\n")&&
-		!read_from_logger(fd, "073eecc8ecf31fe57f9862bc74a1e86b", 0, 10000000)) 
+	//char error_msg[50] = {0};
+	flush(fd);
+	if (read_from_logger(fd, flash_str, 1, 25000000)) {
+		printf("Resetting logger after flash\n");
+		reset_logger();
+	}	
+
+	if (!write_to_logger(fd, "md5c -f /dev/ifbank1 -e 264996\n") &&
+		!read_from_logger(fd, "073eecc8ecf31fe57f9862bc74a1e86b", 1, 10000000)) 
 	{
 		//printf("Programming successful\n");
 		print_ok();
@@ -193,6 +209,7 @@ int flash_check(int fd, char flash_str[]){
 	else {
 	//	printf("Programming failed\n");
 		print_fail();
+		//printf("%s", error_msg);
 		printf("Flash check failed\n");
 		return -1;
 	}
@@ -200,11 +217,12 @@ int flash_check(int fd, char flash_str[]){
 
 int flash_logger(int fd, char flash_str[]){
 	printf("\n---------------------\n");
-	int src_fd, dst_fd, n;
+	int src_fd, dst_fd, n, m;
 	unsigned char buf[4096];
-	char print[] = "Programming logger -    ";
+	char print[] = "Programming DUT -    ";
 	write(1, print, sizeof(print)); 
-
+	//open_fds(&src_fd, &dst_fd);
+	
 	src_fd = open("/home/pi/sourceCodes/test/DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin", O_RDONLY);		
 	dst_fd = open("/media/pi/NODE_L476RG/image.bin", O_CREAT | O_WRONLY);
 	if (src_fd == -1 || dst_fd == -1) perror("Unable to open.\n ");
@@ -220,8 +238,16 @@ int flash_logger(int fd, char flash_str[]){
 			return flash_check(fd, flash_str);
 			break;
 		}
-		n = write(dst_fd, buf, n);
-		if ( n == -1) {
+		m = write(dst_fd, buf, n);
+		if ( m == -1) {
+			close(src_fd);
+			close(dst_fd);
+			printf("Before reset nucleo\n");
+			reset_nucleo(1);
+			src_fd = open("/home/pi/sourceCodes/test/DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin", O_RDONLY);		
+			dst_fd = open("/media/pi/NODE_L476RG/image.bin", O_CREAT | O_WRONLY);
+			//open_fds(&src_fd, &dst_fd);
+			continue;
 			printf("Error writing.\n");
 			break;
 		}
@@ -259,11 +285,12 @@ int fs_write(int fd) {
 }
 
 int mock_factory_write(int fd, char fct_str[]) {
-	char mock_fcm[] = "factory -s 1801001 -r VB1.0 -p DL-MINI-BAT36-D2-3G -f\n"; 
+	char mock_fcm[] = "factory -s 1801001 -r VB1.0 -p DL-MINI-BAT36-D2-3G -f\n";
+       flush(fd);	
 	if (write_to_logger(fd, mock_fcm) ||
-		read_from_logger(fd, fct_str, 0, 5000000) ||
+		read_from_logger(fd, fct_str, 1, 2000000) ||
 		write_to_logger(fd, "factory -c\n") ||
-		read_from_logger(fd, fct_str, 0, 5000000))
+		read_from_logger(fd, fct_str, 1, 2000000))
 	{
 		printf("\033[0;31m");
 		printf("Mock factory config write failed\n");
@@ -277,7 +304,9 @@ int mock_factory_write(int fd, char fct_str[]) {
 int factory_write(int fd, char fct_str[]) {
 	
 	printf("\n---------------------\n");
-	char ser_num[100] = {0} , hard_rev[100], prod_num[100];
+	char ser_num[100] = {0};
+       	char hard_rev[] = "VB1.0";
+	char prod_num[] = "DL-MINI-BAT36-D2-3G";
 	char fct_cmd[255];
 
 	//factory input parameters	
@@ -288,10 +317,10 @@ int factory_write(int fd, char fct_str[]) {
 		scanf("%s", ser_num);
 	} while (strlen(ser_num) > 10);
 
-	printf("Enter hardware revision: ");
-	scanf("%s", hard_rev);
-	printf("Enter product number: ");
-       	scanf("%s", prod_num);	
+//	printf("Enter hardware revision: ");
+//	scanf("%s", hard_rev);
+//	printf("Enter product number: ");
+//     	scanf("%s", prod_num);	
 	sprintf(fct_cmd, "factory -s %s -r %s -p %s -f\n",
 			ser_num, hard_rev, prod_num);
 	
@@ -355,10 +384,12 @@ int measure_voltage(int fd, int i2c_fd) {
 
 int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){	
 	printf("\n---------------------\n");
+	int err = 0;
 	char test_msg[] = "GSM test -    ";
+	char error_msg[] = "ERROR UMTS:";
 	printf("Setting GSM module, please wait 1 minute...\n");
 	if (!write_to_logger(fd, "modem_config -d /dev/ttyS0 -g 1 -ar 9600 -e 15 -b 20\n")
-		&& !read_from_logger(fd, bd_str, 1, 60000000))
+		&& !read_from_logger(fd, bd_str, 1, 40000000))
 		printf("Baud rate changed successfully\n");
 	else { 
 		printf("\033[1;31m");
@@ -380,19 +411,25 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){
 	write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n");
 	write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n");
 	printf("Pinging host 10.210.9.3 ...\n");
-	write_to_logger(fd, "qftpc -e 15 -b 20 -i 10.210.9.3\n");
+	write_to_logger(fd, "qftpc -e 15 -b 20 -i 8.8.8.8\n");
 	write(1, test_msg, sizeof(test_msg)); 
-	if (!read_from_logger(fd, ping_str, 0, 60000000)) {
-		print_ok();
-	//	printf("Ping successful\n");
-		return 0;
-	} else {
-		print_fail();
-	//	printf("Ping failed. Test ended\n");
-		write_to_logger(fd, "reset\n");
-		return 1;
+	if (!read_from_logger(fd, error_msg , 0, 25000000)){
+		err = 1 - err;
 	}
-
+	else if (!read_from_logger(fd, ping_str, 0, 60000000)) {
+		print_ok();
+//		printf("Ping successful\n");
+		return 0;
+	}	
+	print_fail();
+	if (err){
+		printf("\033[0;31m");
+		printf("%s", error_msg);
+		printf("\033[0m");
+	}
+//	printf("Ping failed. Test ended\n");
+	write_to_logger(fd, "reset\n");
+	return 1;
 }
 
 void inputs_config(int fd){
@@ -436,9 +473,9 @@ int reed_test(int fd) {
 	char alarm_str[] ="AT+QPOWD=1";
 	char reed_str[] = "Reed clicked for 3s.";
 	printf("Wait for DUT to enter sleep mode...\n");
-	write(1, print, sizeof(print));
-	if (!read_from_logger(fd, alarm_str, 1, 100000000)){
-	//	printf("Turning magnet on\n");
+	if (!read_from_logger(fd, alarm_str, 1, 200000000)){
+		printf("Turning magnet on\n");	
+		write(1, print, sizeof(print));
 		digitalWrite(22, HIGH);
 		if (!read_from_logger(fd, reed_str, 1, 10000000)){
 			print_ok();
@@ -450,6 +487,7 @@ int reed_test(int fd) {
 			return -1;
 		}
 	} else {
+		write(1, print, sizeof(print));
 		print_fail();
 		write_to_logger(fd, "reset\n");
 		return -1;	
@@ -520,9 +558,52 @@ void power_off(int fd){
 	digitalWrite(JMP, LOW);
 	digitalWrite(REED, LOW);
 	digitalWrite(CAP, HIGH);
-	printf("\nWait 15 seconds for cap to discharge\n");
-	sleep(15);
+	printf("\nWait 30 seconds for cap to discharge\n");
+	sleep(30);
 	digitalWrite(CAP, LOW);
 }
 
+void reset_logger(){
+	digitalWrite(PWR, LOW);
+	sleep(1);
+	digitalWrite(PWR, HIGH);
+	sleep(2);
+}
+
+double calculate_time(time_t *start){
+	time_t end;
+	time(&end);
+	return difftime(end, *start);
+}
+
+void reset_nucleo(int sleeptime){
+	//printf("Resetting!\n");
+	pinMode(NPWR, OUTPUT);
+	digitalWrite(NPWR, LOW);
+	sleep(sleeptime);
+	digitalWrite(NPWR, HIGH);
+	pinMode(PUPIN, INPUT);
+	pullUpDnControl(PUPIN, PUD_UP);
+	//sleep(2);
+	//time_t start;
+	//time (&start);
+	do {
+		;
+	//	if (calculate_time(&start) > 3){
+	//		printf("Running script\n");
+	//		system("sudo /home/pi/sourceCodes/test/mount_nucleo");
+	//	}		
+	} while (open("/media/pi/NODE_L476RG", O_RDONLY) < 0);
+}
+
+void open_fds(int *src_fd, int *dst_fd ){
+//	if (*src_fd || *dst_fd ){
+//		close(*src_fd);
+//		close(*dst_fd);
+//	}		
+	*src_fd = open("/home/pi/sourceCodes/test/DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin", O_RDONLY);		
+	*dst_fd = open("/media/pi/NODE_L476RG/image.bin", O_CREAT | O_WRONLY);
+	//if (*src_fd == -1 || *dst_fd == -1) perror("Unable to open.\n ");
+
+}
 

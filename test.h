@@ -19,3 +19,6 @@ int soft_rev_check(int fd);
 void power_off(int fd);
 void print_ok();
 void print_fail();
+void reset_logger();
+void reset_nucleo(int sleeptime);
+void open_fds(int *src_fd, int *dst_fd);
