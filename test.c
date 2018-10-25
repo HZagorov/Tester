@@ -22,17 +22,33 @@
 #define JMP 24
 #define PWR 27
 
-int main() {
+int main(int argc, char *argv[]) {
+	char  *apn = "internet.vivacom.bg";
 	int fd, i2c_fd, address = 0x50;
 	time_t start, end;
 	double dif;
+	int opt;
+
+	while ((opt = getopt(argc, argv, "a:")) != -1) {
+		switch (opt){
+		case 'a':
+			apn = optarg;
+			break;			
+		default:
+			fprintf(stderr, "Usage %s [-a apn]\n", argv[0]);
+			return 0;
+		}
+	}
+	
 
 	//comparison strings
 	char fct_str[] = "written successfully";
 	char bd_str[] = "Successfully changed baud rate";
 	char ping_str[] = "Successfully ping host";
 	char flash_str[] = "NuttX-0.4.27";
-	
+	char apn_cmd[200];
+       	snprintf(apn_cmd, 200, "printf \"umts_apn %s\" >> /rsvd/default.cfg\nprintf \"\\n\" >> rsvd/default.cfg\n", apn);
+
 	setup();
 	//open serial port 
 	if ((fd = open("/dev/ttyS0", O_RDWR | O_NOCTTY)) == -1) // O_NDELAY
@@ -71,11 +87,11 @@ int main() {
 
 
 
-	if (flash_logger(fd, flash_str) ||  fs_write(fd) ||
-		mock_factory_write(fd, fct_str) || led_test(fd) ||
-		gsm_test(fd, bd_str, ping_str, i2c_fd) ||
+	if (/*flash_logger(fd, flash_str) ||  fs_write(fd) ||
+		*/mock_factory_write(fd, fct_str, apn_cmd) ||/* led_test(fd) ||*/
+		gsm_test(fd, bd_str, ping_str, i2c_fd, apn) /*||
 	       	inputs_test(fd, i2c_fd) ||
-	      	factory_write(fd, fct_str) )
+	      	factory_write(fd, fct_str, apn_cmd)*/ )
 	{
 		power_off(fd);
 		printf("\033[1;31m");
@@ -195,7 +211,6 @@ int flash_check(int fd, char flash_str[]){
 	//char error_msg[50] = {0};
 	flush(fd);
 	if (read_from_logger(fd, flash_str, 1, 25000000)) {
-		printf("Resetting logger after flash\n");
 		reset_logger();
 	}	
 
@@ -284,13 +299,15 @@ int fs_write(int fd) {
 	//return check_for_input(fd);
 }
 
-int mock_factory_write(int fd, char fct_str[]) {
+int mock_factory_write(int fd, char fct_str[], char apn_cmd[]) {
 	char mock_fcm[] = "factory -s 1801001 -r VB1.0 -p DL-MINI-BAT36-D2-3G -f\n";
-       flush(fd);	
-	if (write_to_logger(fd, mock_fcm) ||
-		read_from_logger(fd, fct_str, 1, 2000000) ||
+       	flush(fd);
+
+	if ( /*write_to_logger(fd, mock_fcm) ||
+		read_from_logger(fd, fct_str, 1, 2000000) ||*/
+		write_to_logger(fd, apn_cmd) ||
 		write_to_logger(fd, "factory -c\n") ||
-		read_from_logger(fd, fct_str, 1, 2000000))
+		read_from_logger(fd, fct_str, 0, 2000000))
 	{
 		printf("\033[0;31m");
 		printf("Mock factory config write failed\n");
@@ -301,7 +318,7 @@ int mock_factory_write(int fd, char fct_str[]) {
 	return 0;
 }
 
-int factory_write(int fd, char fct_str[]) {
+int factory_write(int fd, char fct_str[], char apn_cmd[]) {
 	
 	printf("\n---------------------\n");
 	char ser_num[100] = {0};
@@ -326,6 +343,7 @@ int factory_write(int fd, char fct_str[]) {
 	
 	if ( !write_to_logger(fd, fct_cmd) && 
 			!read_from_logger(fd, fct_str, 1, 2000000 ) &&
+			!write_to_logger(fd, apn_cmd) &&
 			!write_to_logger(fd, "factory -c\n") &&
 			!read_from_logger(fd, fct_str, 1, 2000000))
 	{
@@ -382,11 +400,15 @@ int measure_voltage(int fd, int i2c_fd) {
 	}
 }
 
-int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){	
+int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd, char apn[]){	
 	printf("\n---------------------\n");
 	int err = 0;
 	char test_msg[] = "GSM test -    ";
 	char error_msg[] = "ERROR UMTS:";
+	char qftpc_cmd[200];
+	char *ip = "8.8.8.8";
+	if (!strcmp(apn, "cp-mondis")) ip = "10.210.9.3";
+	snprintf(qftpc_cmd, 200, "qftpc -a %s -e 15 -b 20 -i %s\n", apn, ip);
 	printf("Setting GSM module, please wait 1 minute...\n");
 	if (!write_to_logger(fd, "modem_config -d /dev/ttyS0 -g 1 -ar 9600 -e 15 -b 20\n")
 		&& !read_from_logger(fd, bd_str, 1, 40000000))
@@ -410,8 +432,8 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd){
 	//AT commands
 	write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n");
 	write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n");
-	printf("Pinging host 10.210.9.3 ...\n");
-	write_to_logger(fd, "qftpc -e 15 -b 20 -i 8.8.8.8\n");
+	printf("Pinging host %s ...\n", ip);
+	write_to_logger(fd, qftpc_cmd);
 	write(1, test_msg, sizeof(test_msg)); 
 	if (!read_from_logger(fd, error_msg , 0, 25000000)){
 		err = 1 - err;
