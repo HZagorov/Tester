@@ -437,7 +437,7 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd, char apn[]){
 	printf("Pinging host %s ...\n", ip);
 	write_to_logger(fd, qftpc_cmd);
 	write(1, test_msg, sizeof(test_msg)); 
-	if (!read_from_logger(fd, error_msg , 1, 25000000)){
+	if (!read_from_logger(fd, error_msg , 0, 25000000)){
 		err = 1 - err;
 	}
 	else if (!read_from_logger(fd, ping_str, 0, 60000000)) {
