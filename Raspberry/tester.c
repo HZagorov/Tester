@@ -7,7 +7,7 @@
 #include <stdio_ext.h>
 #include <time.h>
 #include <math.h>
-#include "test.h"
+#include "tester.h"
 
 #include <sys/time.h>
 #include <sys/types.h>
