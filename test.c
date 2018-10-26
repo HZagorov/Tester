@@ -29,6 +29,7 @@ int main(int argc, char *argv[]) {
 	double dif;
 	int opt;
 
+	//check for input parameters - apn
 	while ((opt = getopt(argc, argv, "a:")) != -1) {
 		switch (opt){
 		case 'a':
@@ -85,13 +86,14 @@ int main(int argc, char *argv[]) {
 	printf("=============\n\n");
 	time(&start);
 
-
-
-	if (/*flash_logger(fd, flash_str) ||  fs_write(fd) ||
-		*/mock_factory_write(fd, fct_str, apn_cmd) ||/* led_test(fd) ||*/
-		gsm_test(fd, bd_str, ping_str, i2c_fd, apn) /*||
-	       	inputs_test(fd, i2c_fd) ||
-	      	factory_write(fd, fct_str, apn_cmd)*/ )
+	//test conditions
+	if (flash_logger(fd, flash_str)
+			|| fs_write(fd)
+		   	|| mock_factory_write(fd, fct_str, apn_cmd) 
+			|| led_test(fd) 
+			|| gsm_test(fd, bd_str, ping_str, i2c_fd, apn) 
+			|| inputs_test(fd, i2c_fd) 
+			|| factory_write(fd, fct_str, apn_cmd))
 	{
 		power_off(fd);
 		printf("\033[1;31m");
@@ -101,7 +103,6 @@ int main(int argc, char *argv[]) {
 	}
 	if (soft_rev_check(fd))
 	       printf("\nSoftware revision doesn't match, must be 0.4.27\n");
-
 
 	power_off(fd);
 	time(&end);
@@ -117,6 +118,7 @@ int main(int argc, char *argv[]) {
 	return 0;
 }
 
+//setup GPIO pins and Nucleo
 void setup(){
 	//system ("gpio edge ?? rising");
 	wiringPiSetupGpio();
@@ -161,7 +163,7 @@ int read_from_logger (int fd, char comp_str[], int flush, int timeout){
 	fd_set rfds;
 	struct timeval tv;
 	
-	FD_ZERO(&rfds); //clars the file descriptor set
+	FD_ZERO(&rfds); //clears the file descriptor set
 	FD_SET(fd, &rfds); //add fd to the set
 
 	tv.tv_sec = 0;
@@ -193,6 +195,7 @@ int read_from_logger (int fd, char comp_str[], int flush, int timeout){
 	} 
 }
 
+//flush serial input
 void flush(int fd){
 	read_from_logger(fd, NULL, 1, 1000000 );
 }
@@ -208,7 +211,6 @@ int start_test() {
 }
 
 int flash_check(int fd, char flash_str[]){
-	//char error_msg[50] = {0};
 	flush(fd);
 	if (read_from_logger(fd, flash_str, 1, 25000000)) {
 		reset_logger();
@@ -303,11 +305,11 @@ int mock_factory_write(int fd, char fct_str[], char apn_cmd[]) {
 	char mock_fcm[] = "factory -s 1801001 -r VB1.0 -p DL-MINI-BAT36-D2-3G -f\n";
        	flush(fd);
 
-	if ( /*write_to_logger(fd, mock_fcm) ||
-		read_from_logger(fd, fct_str, 1, 2000000) ||*/
+	if ( write_to_logger(fd, mock_fcm) ||
+		read_from_logger(fd, fct_str, 1, 2000000) ||
 		write_to_logger(fd, apn_cmd) ||
 		write_to_logger(fd, "factory -c\n") ||
-		read_from_logger(fd, fct_str, 0, 2000000))
+		read_from_logger(fd, fct_str, 1, 2000000))
 	{
 		printf("\033[0;31m");
 		printf("Mock factory config write failed\n");
@@ -435,7 +437,7 @@ int gsm_test(int fd, char bd_str[],char ping_str[], int i2c_fd, char apn[]){
 	printf("Pinging host %s ...\n", ip);
 	write_to_logger(fd, qftpc_cmd);
 	write(1, test_msg, sizeof(test_msg)); 
-	if (!read_from_logger(fd, error_msg , 0, 25000000)){
+	if (!read_from_logger(fd, error_msg , 1, 25000000)){
 		err = 1 - err;
 	}
 	else if (!read_from_logger(fd, ping_str, 0, 60000000)) {
@@ -592,6 +594,7 @@ void reset_logger(){
 	sleep(2);
 }
 
+//not added in test.h
 double calculate_time(time_t *start){
 	time_t end;
 	time(&end);
