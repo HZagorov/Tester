@@ -11,7 +11,7 @@ Click "Export to desktop IDE" and choose toolchain (Sw4STM32). After loading the
 ```
 -DMBED_DEBUG -DMBED_TRAP_ERRORS_ENABLED=1 -Wl,-n -Wl,--start-group -lstdc++ -lsupc++ -lm -lc -lgcc -lnosys -Wl,--end-group
 ```
-After this the project is ready for building.
+After this the project is ready to build.
 ## Compiling
 To compile the tester.c program run the following compile command
 ```
