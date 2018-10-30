@@ -17,7 +17,7 @@
 
 #define	PUPIN 9
 #define	NPWR 11
-#define CAP 17
+#define	CAP 17
 #define	REED 22
 #define	JMP 24
 #define	PWR 27
@@ -52,7 +52,8 @@ main(int argc, char *argv[]){
 		}
 	}
 	
-    snprintf(apn_cmd, 200, "printf \"umts_apn %s\" >> /rsvd/default.cfg\nprintf \"\\n\" >> rsvd/default.cfg\n", apn);
+    snprintf(apn_cmd, 200, "printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
+			 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
 	setup_devices(); //power up Nucleo and DUT
 	
@@ -68,6 +69,8 @@ main(int argc, char *argv[]){
 		printf("Failed to open the I2C bus\n");
 		return -1;
 	}
+
+	//set I2C Nucleo address
 	if (ioctl(i2c_fd, I2C_SLAVE, address)) 
 	{
 		printf("Failed to acquire bus access and/or talk to Nucleo.\n");
@@ -345,8 +348,6 @@ mock_factory_write(int fd, char fct_str[], char apn_cmd[])
 {
 	char mock_fcm[] = "factory -s 1801001 -r VB1.0 -p DL-MINI-BAT36-D2-3G -f\n";
     
-	flush(fd);
-
 	if (write_to_logger(fd, mock_fcm) 
 		|| read_from_logger(fd, fct_str, 1, 2000000) 
 		|| write_to_logger(fd, apn_cmd) 
