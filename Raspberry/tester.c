@@ -52,7 +52,7 @@ main(int argc, char *argv[]){
 		}
 	}
 	
-    snprintf(apn_cmd, 200, "printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
+	snprintf(apn_cmd, 200, "printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
 			 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
 	setup_devices(); //power up Nucleo and DUT
@@ -419,16 +419,9 @@ led_test(int fd)
 	
 	scanf(" %c", &response);
 	printf("LED test -    ");
-	
-	if (response == 'y' || response == 'Y' ) 
-	{
-		print_ok();
-	} 
-	else 
-	{
-		print_fail();
-	}
-	
+
+	(response == 'y' || response == 'Y') ? print_ok() : print_fail();
+
 	write_to_logger(fd, "gpio -o 0 /dev/gpout_systemstatusled\n");
 	flush(fd);
 	return 0;
