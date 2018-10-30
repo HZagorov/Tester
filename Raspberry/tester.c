@@ -162,7 +162,7 @@ setup_termios(int fd)
 }
 
 int 
-compare_strings(char buf[], char compstr[]) 
+compare_strings(char *buf, char *compstr) 
 {
 	char *pch = strstr(buf, compstr);	
 
@@ -174,7 +174,7 @@ compare_strings(char buf[], char compstr[])
 }
 
 int 
-write_to_logger (int fd, char str[])
+write_to_logger (int fd, char *str)
 {
 	int tx_length = write (fd, str , strlen(str));
 
@@ -186,7 +186,7 @@ write_to_logger (int fd, char str[])
 }
 
 int
-read_from_logger (int fd, char comp_str[], int flush, int timeout){
+read_from_logger (int fd, char *comp_str, int flush, int timeout){
 	int retval;
 	int rx_length;
 	char buf[256];
@@ -241,7 +241,7 @@ flush(int fd)
 }
 
 int 
-flash_check(int fd, char flash_str[])
+flash_check(int fd, char *flash_str)
 {
 
 	flush(fd);
@@ -266,7 +266,7 @@ flash_check(int fd, char flash_str[])
 }
 
 int 
-flash_logger(int fd, char flash_str[])
+flash_logger(int fd, char *flash_str)
 {
 	int src_fd, dst_fd, n, m;
 	unsigned char buf[4096];
@@ -344,7 +344,7 @@ fs_write(int fd)
 }
 
 int
-mock_factory_write(int fd, char fct_str[], char apn_cmd[]) 
+mock_factory_write(int fd, char *fct_str, char *apn_cmd) 
 {
 	char mock_fcm[] = "factory -s 1801001 -r VB1.0 -p DL-MINI-BAT36-D2-3G -f\n";
     
@@ -365,7 +365,7 @@ mock_factory_write(int fd, char fct_str[], char apn_cmd[])
 }
 
 int 
-factory_write(int fd, char fct_str[], char apn_cmd[]) 
+factory_write(int fd, char *fct_str, char *apn_cmd) 
 {	
 	char ser_num[100] = {0};
     char hard_rev[] = "VB1.0";
