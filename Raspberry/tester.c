@@ -15,15 +15,16 @@
 
 #include "tester.h"
 
-#define	PUPIN 9
-#define	NPWR 11
-#define	CAP 17
-#define	REED 22
-#define	JMP 24
-#define	PWR 27
+#define	PUPIN 9	//pullup input
+#define	NPWR 11	//nucleo power
+#define	CAP 17	//capacitor
+#define	REED 22	//reed ampule
+#define	JMP 24	//console jumper
+#define	PWR 27	//DUT power
 
 #define IMAGE_PATH "/home/pi/sourceCodes/test/DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin" 
 #define NUCLEO_PATH "/media/pi/NODE_L476RG"
+#define SOFT_REV "NuttX-0.4.27"
 
 int 
 main(int argc, char *argv[]){
@@ -36,7 +37,6 @@ main(int argc, char *argv[]){
 	char fct_str[] = "written successfully";
 	char bd_str[] = "Successfully changed baud rate";
 	char ping_str[] = "Successfully ping host";
-	char flash_str[] = "NuttX-0.4.27";
 	char apn_cmd[200];
 
 	//check for input parameters - apn
@@ -87,7 +87,7 @@ main(int argc, char *argv[]){
 	time(&start);
 
 	//test conditions
-	if (flash_logger(fd, flash_str)
+	if (flash_logger(fd)
 		|| fs_write(fd) //file system config
 		|| mock_factory_write(fd, fct_str, apn_cmd) 
 		|| led_test(fd) 
@@ -241,12 +241,12 @@ flush(int fd)
 }
 
 int 
-flash_check(int fd, char *flash_str)
+flash_check(int fd)
 {
 
 	flush(fd);
 
-	if (read_from_logger(fd, flash_str, 1, 20000000)) 
+	if (read_from_logger(fd, SOFT_REV, 1, 20000000)) 
 	{
 		reset_logger();
 	}	
@@ -266,7 +266,7 @@ flash_check(int fd, char *flash_str)
 }
 
 int 
-flash_logger(int fd, char *flash_str)
+flash_logger(int fd)
 {
 	int src_fd, dst_fd, n, m;
 	unsigned char buf[4096];
@@ -296,7 +296,7 @@ flash_logger(int fd, char *flash_str)
 		{
 			close(src_fd);
 			close(dst_fd);
-			return flash_check(fd, flash_str);
+			return flash_check(fd);
 			break;
 		}
 		
