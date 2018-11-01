@@ -17,15 +17,15 @@
 
 #include "tester.h"
 
-#define	PUPIN	9	//pullup input
-#define	NPWR	11	//nucleo power
-#define	CAP 	17	//capacitor
-#define	REED 	22	//reed ampule
-#define	JMP 	24	//console jumper
-#define	PWR 	27	//DUT power
+#define PUPIN	9	//pullup input
+#define NPWR	11	//nucleo power
+#define CAP 	17	//capacitor
+#define REED 	22	//reed ampule
+#define JMP 	24	//console jumper
+#define PWR 	27	//DUT power
 
 #define NUCLEO_PATH	"/media/pi/NODE_L476RG"
-#define	IMAGE_PATH	"/home/pi/sourceCodes/test/" \
+#define IMAGE_PATH	"/home/pi/sourceCodes/test/" \
 					"DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin" 
 #define SOFT_REV	"NuttX-0.4.27"
 #define UART_PORT	"/dev/ttyS0"
@@ -64,8 +64,8 @@ main(int argc, char *argv[])
 	
 	strncpy(soft_ver, SOFT_REV+6, 6);
 	snprintf(apn_cmd, sizeof apn_cmd, 
-			"printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
-			"printf \"\\n\" >> rsvd/default.cfg\n", apn);
+		"printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
+		"printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
 	setup_devices(); //power up Nucleo and DUT
 	
@@ -257,7 +257,7 @@ void calculate_md5sum(char *md5sum, int size){
 	FILE *p = popen(MD5SUM_CMD, "r");
 
 	for (i = 0; i < size - 1  && isxdigit(ch = fgetc(p)); i++) {
-			*md5sum++ = ch;
+		*md5sum++ = ch;
 	}
 
 	*md5sum = '\0';
@@ -403,7 +403,7 @@ int
 factory_write(int fd, char *fct_str, char *apn_cmd) 
 {	
 	char ser_num[100] = {0};
-    char hard_rev[] = "VB1.0";
+	char hard_rev[] = "VB1.0";
 	char prod_num[] = "DL-MINI-BAT36-D2-3G";
 	char fct_cmd[255];
 
@@ -475,7 +475,7 @@ measure_voltage(int fd, int i2c_fd)
 
 	if (voltage > 3600) {
 		printf("VCCGSM value is set - %d mV\n", voltage);
-	    return 0;
+		return 0;
 	}
 	else {
 		printf("VCCGSM is not set - %d mV\n", voltage);
@@ -507,7 +507,6 @@ gsm_test(int fd, char *bd_str,char *ping_str, int i2c_fd, char *apn)
 	printf("Setting GSM module, please wait 1 minute...\n");
 	if (!write_to_logger(fd, bd_cmd)
 		&& !read_from_logger(fd, bd_str, DONT_FLUSH, 40)) {
-
 		printf("Baud rate changed successfully\n");
 	} else { 
 		printf("\033[1;31m");
@@ -667,7 +666,7 @@ generate_pulses(int fd, int i2c_fd)
 	}
 
 	 print_fail();
-     return -1;			
+	 return -1;			
 }
 
 
@@ -720,7 +719,6 @@ double
 calculate_time(time_t *start)
 {
 	time_t end;
-
 	time(&end);
 	return difftime(end, *start);
 }
@@ -766,6 +764,5 @@ open_fds(int *src_fd, int *dst_fd)
 	*src_fd = open(IMAGE_PATH, O_RDONLY);		
 	*dst_fd = open(NUCLEO_PATH "image.bin", O_CREAT | O_WRONLY);
 	//if (*src_fd == -1 || *dst_fd == -1) perror("Unable to open.\n ");
-
 }
 
