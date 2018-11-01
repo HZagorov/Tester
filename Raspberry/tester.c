@@ -17,15 +17,15 @@
 
 #include "tester.h"
 
-#define	PUPIN 9	//pullup input
-#define	NPWR 11	//nucleo power
-#define	CAP 17	//capacitor
-#define	REED 22	//reed ampule
-#define	JMP 24	//console jumper
-#define	PWR 27	//DUT power
+#define	PUPIN	9	//pullup input
+#define	NPWR	11	//nucleo power
+#define	CAP 	17	//capacitor
+#define	REED 	22	//reed ampule
+#define	JMP 	24	//console jumper
+#define	PWR 	27	//DUT power
 
 #define NUCLEO_PATH	"/media/pi/NODE_L476RG"
-#define IMAGE_PATH	"/home/pi/sourceCodes/test/" \
+#define	IMAGE_PATH	"/home/pi/sourceCodes/test/" \
 					"DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin" 
 #define SOFT_REV	"NuttX-0.4.27"
 #define UART_PORT	"/dev/ttyS0"
@@ -49,7 +49,6 @@ main(int argc, char *argv[])
 	char ping_str[] = "Successfully ping host";
 	char apn_cmd[200];
 	char soft_ver[7];
-	strncpy(soft_ver, SOFT_REV+6, 6);
 
 	//check for input parameters - apn
 	while ((opt = getopt(argc, argv, "a:")) != -1) {
@@ -63,6 +62,7 @@ main(int argc, char *argv[])
 		}
 	}
 	
+	strncpy(soft_ver, SOFT_REV+6, 6);
 	snprintf(apn_cmd, sizeof apn_cmd, 
 			"printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
 			"printf \"\\n\" >> rsvd/default.cfg\n", apn);
@@ -135,9 +135,9 @@ void
 setup_devices()
 {
 	//system ("gpio edge ?? rising");
-	char path[100];
+	char fail_path[100];
 
-	snprintf(path, sizeof path,"%s%s", NUCLEO_PATH, "/FAIL.TXT");
+	snprintf(fail_path, sizeof fail_path,"%s%s", NUCLEO_PATH, "/FAIL.TXT");
 
 	wiringPiSetupGpio();
 	pinMode(PWR, OUTPUT);	
@@ -152,10 +152,9 @@ setup_devices()
 		reset_nucleo(1);
 
 	} 
-	if (open(path, O_RDONLY) > 0) {
+	if (open(fail_path, O_RDONLY) > 0) {
 		reset_nucleo(1);
 	}
-
 }
 
 void 
@@ -165,8 +164,11 @@ setup_termios(int fd)
 
 	tcgetattr(fd, &options);
 	options.c_iflag &=  ~(ICRNL);
-	options.c_lflag |= ICANON; //ICANON flagallows us to turn off canonical mode. This means we will be reading input byte-by-byte, instead of line-by-line.
-	//options.c_lflag |= (ICANON | ECHOE | ECHOK) ;
+	options.c_lflag |= ICANON;/*ICANON flag allows us to turn off
+							   	canonical mode.This means we will
+							   	be reading input byte-by-byte,
+							   	instead of line-by-line.*/
+	//options.c_lflag |= (ICANON | ECHOE | ECHOK);
 	options.c_lflag &= ~( ECHO | ECHOE | ECHOK | ECHONL |IEXTEN | ISIG);
 	options.c_cflag = B38400 | CS8 |CLOCAL| CREAD;
 	tcsetattr (fd,TCSANOW, &options);	
@@ -250,8 +252,8 @@ flush(int fd)
 
 void calculate_md5sum(char *md5sum, int size){
 	#define MD5SUM_CMD "md5sum " IMAGE_PATH
+	
 	int i, ch;
-
 	FILE *p = popen(MD5SUM_CMD, "r");
 
 	for (i = 0; i < size - 1  && isxdigit(ch = fgetc(p)); i++) {
@@ -266,10 +268,10 @@ void calculate_md5sum(char *md5sum, int size){
 int 
 flash_check(int fd)
 {
-	struct stat image_stat;
 	int image_size;
 	char md5c_cmd[100];
 	char md5sum[33];
+	struct stat image_stat;
 	
 	flush(fd);
 
@@ -300,16 +302,17 @@ flash_logger(int fd)
 {
 	int src_fd, dst_fd, n, m;
 	unsigned char buf[4096];
-	char print[] = "Programming DUT -    ";
-	char path[100];
+	char test_msg[] = "Programming DUT -    ";
+	char nucleo_path[100];
 	
-	snprintf(path, sizeof path, "%s%s", NUCLEO_PATH, "/image.bin");
+	snprintf(nucleo_path, sizeof nucleo_path,
+			 "%s%s", NUCLEO_PATH, "/image.bin");
 
 	printf("\n---------------------\n");
-	write(1, print, sizeof(print)); 	
+	write(1, test_msg, sizeof(test_msg)); 	
 
 	src_fd = open(IMAGE_PATH, O_RDONLY);		
-	dst_fd = open(path, O_CREAT | O_WRONLY);
+	dst_fd = open(nucleo_path, O_CREAT | O_WRONLY);
 	
 	if (src_fd == -1 || dst_fd == -1) {
 		perror("Unable to open.\n ");
@@ -319,6 +322,7 @@ flash_logger(int fd)
 		n = read( src_fd, buf, 4096);
 		
 		if (n == -1) {
+			print_fail();
 			printf("Error reading file.\n");
 			break;
 		}
@@ -326,7 +330,6 @@ flash_logger(int fd)
 			close(src_fd);
 			close(dst_fd);
 			return flash_check(fd);
-			break;
 		}
 		
 		m = write(dst_fd, buf, n);
@@ -337,7 +340,7 @@ flash_logger(int fd)
 			printf("Before reset_nucleo\n");
 			reset_nucleo(1);
 			src_fd = open(IMAGE_PATH, O_RDONLY);		
-			dst_fd = open(path, O_CREAT | O_WRONLY);
+			dst_fd = open(nucleo_path, O_CREAT | O_WRONLY);
 			continue;
 		}
 	}
@@ -353,7 +356,9 @@ flash_logger(int fd)
 int 
 fs_write(int fd)
 {
-	char strings[4][255] = 
+	char umount_mnt_cmd[] = "umount /mnt\n";
+	char umount_rsvd_cmd[] = "umount /rsvd\n";
+	char fs_cmds[4][255] = 
 	{
 		{ "mkfatfs /dev/mtdblock0\n"},
 		{ "mount -t vfat /dev/mtdblock0 /mnt\n" },
@@ -361,11 +366,11 @@ fs_write(int fd)
 		{ "mount -t vfat /dev/ifbank2r /rsvd\n" }
 	};
 
-	write_to_logger(fd, "umount /mnt\n");
-	write_to_logger(fd, "umount /rsvd\n");	
+	write_to_logger(fd, umount_mnt_cmd);
+	write_to_logger(fd, umount_rsvd_cmd);	
 	
 	for (int i = 0; i < 4; i++) {
-		write_to_logger(fd, strings[i]);
+		write_to_logger(fd, fs_cmds[i]);
 	}
 
 	flush(fd);
@@ -375,9 +380,10 @@ fs_write(int fd)
 int
 mock_factory_write(int fd, char *fct_str, char *apn_cmd) 
 {
-	char mock_fcm[] = "factory -s 1801001 -r VB1.0 -p DL-MINI-BAT36-D2-3G -f\n";
+	char mock_fct_cmd[] = "factory -s 1801001 -r VB1.0 "
+		   				  "-p DL-MINI-BAT36-D2-3G -f\n";
     
-	if (write_to_logger(fd, mock_fcm) 
+	if (write_to_logger(fd, mock_fct_cmd) 
 		|| read_from_logger(fd, fct_str, FLUSH, 2) 
 		|| write_to_logger(fd, apn_cmd) 
 		|| write_to_logger(fd, "factory -c\n") 
@@ -436,11 +442,13 @@ int
 led_test(int fd) 
 {
 	char response;	
-	
+	char led_on_cmd[] = "gpio -o 1 /dev/gpout/systemstatusled\n";
+	char led_off_cmd[] = "gpio -o 0 /dev/gpout/systemstatusled\n";
+
 	printf("\n---------------------\n");
 	printf("Starting system LED\n");
 	
-	write_to_logger(fd, "gpio -o 1 /dev/gpout_systemstatusled\n");
+	write_to_logger(fd, led_on_cmd);
 	printf("Does the LED work? [y/n] ");
 	
 	scanf(" %c", &response);
@@ -448,7 +456,7 @@ led_test(int fd)
 
 	(response == 'y' || response == 'Y') ? print_ok() : print_fail();
 
-	write_to_logger(fd, "gpio -o 0 /dev/gpout_systemstatusled\n");
+	write_to_logger(fd, led_off_cmd);
 	flush(fd);
 	return 0;
 }
@@ -484,6 +492,7 @@ gsm_test(int fd, char *bd_str,char *ping_str, int i2c_fd, char *apn)
 	char test_msg[] = "GSM test -    ";
 	char error_msg[] = "ERROR UMTS:";
 	char qftpc_cmd[200];
+	char bd_cmd[] = "modem_config -d /dev/ttyS0 -g 1 -ar 9600 -e 15 -b 20\n";
 	char mondis_ip[] = "10.210.9.3";
 	char google_ip[] = "8.8.8.8";
 	char *ip = google_ip;
@@ -496,8 +505,7 @@ gsm_test(int fd, char *bd_str,char *ping_str, int i2c_fd, char *apn)
 
 	printf("\n---------------------\n");
 	printf("Setting GSM module, please wait 1 minute...\n");
-	if (!write_to_logger(fd, 
-		"modem_config -d /dev/ttyS0 -g 1 -ar 9600 -e 15 -b 20\n")
+	if (!write_to_logger(fd, bd_cmd)
 		&& !read_from_logger(fd, bd_str, DONT_FLUSH, 40)) {
 
 		printf("Baud rate changed successfully\n");
@@ -595,27 +603,27 @@ inputs_config(int fd)
 int 
 reed_test(int fd) 
 {
-	char print[] = "Reed test -    ";
+	char test_msg[] = "Reed test -    ";
 	char alarm_str[] ="AT+QPOWD=1";
 	char reed_str[] = "Reed clicked for 3s.";
 	
 	printf("\n---------------------\n");
 	printf("Wait for DUT to enter sleep mode...\n");
 
-	if (!read_from_logger(fd, alarm_str, FLUSH, 200000000)) {
+	if (!read_from_logger(fd, alarm_str, FLUSH, 120)) {
 		printf("Turning magnet on\n");	
-		write(1, print, sizeof(print));
+		write(1, test_msg, sizeof(test_msg));
 		digitalWrite(22, HIGH);
 		
-		if (!read_from_logger(fd, reed_str, FLUSH, 10000000)) {
+		if (!read_from_logger(fd, reed_str, FLUSH, 10)) {
 			print_ok();
 			write_to_logger(fd, "reset\n");
 			return 0;
 		} else {
 			print_fail();
 			printf("Activate reed ampule by hand\n");
-			if (!read_from_logger(fd, reed_str, FLUSH, 20000000)) {
-				write(1, print, sizeof(print));
+			if (!read_from_logger(fd, reed_str, FLUSH, 20)) {
+				write(1, test_msg, sizeof(test_msg));
 				print_ok();
 				write_to_logger(fd, "reset\n");
 				return 0;
@@ -623,7 +631,7 @@ reed_test(int fd)
 		}
 	}  
 
-	write(1, print, sizeof(print));
+	write(1, test_msg, sizeof(test_msg));
 	print_fail();
 	write_to_logger(fd, "reset\n");
 	return -1;	 
@@ -634,20 +642,21 @@ generate_pulses(int fd, int i2c_fd)
 {
 	char buf[20] = "Generate";
 	char alarm_str[] = "Alarm Ampule-Reed received.";
-	char print[] = "Inputs test -    ";
+	char test_msg[] = "Inputs test -    ";
 
 	printf("Starting alarm\n");
 	write_to_logger(fd, "alarm -f\n");
-	write(1, print, sizeof(print));
+	write(1, test_msg, sizeof(test_msg));
 
-	if (!read_from_logger(fd, alarm_str, FLUSH, 2000000)) {
+	if (!read_from_logger(fd, alarm_str, FLUSH, 2)) {
 		write(i2c_fd, buf, strlen(buf));
-		read_from_logger(fd, NULL, FLUSH, 1500000);
+		read_from_logger(fd, NULL, FLUSH, 1.5);
 			
 		if (!write_to_logger(fd, "cat /dev/lptim1\n") 
-			&& !read_from_logger(fd, "96", FLUSH, 500000) 
+			&& !read_from_logger(fd, "96", FLUSH, 0.5) 
 			&& !write_to_logger(fd, "cat /dev/lptim2\n") 
-			&& !read_from_logger(fd, "95", FLUSH, 500000)) {	
+			&& !read_from_logger(fd, "95", FLUSH, 0.5)) {
+
 			print_ok();
 			flush(fd);
 			return 0;				
@@ -675,12 +684,12 @@ int
 soft_rev_check(int fd, char *soft_ver)
 {
 	write_to_logger(fd, "uname -a\n");
-	return read_from_logger(fd, soft_ver, FLUSH, 500000);
+	return read_from_logger(fd, soft_ver, FLUSH, 0.5);
 }
 
 void 
-print_ok() 
-{	
+print_ok()
+{
 	printf("\033[0;32m");
 	printf("OK\n");
 	printf("\033[0m");
@@ -692,7 +701,7 @@ print_fail()
 	printf("\033[0;31m");
 	printf("FAIL\n");
 	printf("\033[0m");
-}	
+}
 
 void 
 power_off(int fd)
@@ -755,7 +764,7 @@ open_fds(int *src_fd, int *dst_fd)
 //		close(*dst_fd);
 //	}		
 	*src_fd = open(IMAGE_PATH, O_RDONLY);		
-	*dst_fd = open("/media/pi/NODE_L476RG/image.bin", O_CREAT | O_WRONLY);
+	*dst_fd = open(NUCLEO_PATH "image.bin", O_CREAT | O_WRONLY);
 	//if (*src_fd == -1 || *dst_fd == -1) perror("Unable to open.\n ");
 
 }
