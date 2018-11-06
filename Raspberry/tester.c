@@ -25,11 +25,8 @@ main(int argc, char *argv[])
 	time_t start, end;
 	double dif;
 	
-	//comparison strings
-	char fct_str[] = "written successfully";
-	
+	char fct_str[] = "written successfully";	
 	char apn_cmd[200];
-	char soft_ver[7] = {0};
 
 	//check for input parameters - apn
 	while ((opt = getopt(argc, argv, "a:")) != -1) {
@@ -43,10 +40,9 @@ main(int argc, char *argv[])
 		}
 	}
 
-	strncpy(soft_ver, SOFT_REV+6, 6);
 	snprintf(apn_cmd, sizeof apn_cmd, 
-		"printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
-		"printf \"\\n\" >> rsvd/default.cfg\n", apn);
+		 "printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
+		 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
 	setup_devices(); //power up Nucleo and DUT
 	
@@ -96,9 +92,9 @@ main(int argc, char *argv[])
 		return -1;
 	}
 	
-	if (soft_rev_check(fd, soft_ver)) {
-		printf("\nSoftware revision doesn't match, must be %s\n",
-			soft_ver);
+	if (soft_ver_check(fd, SOFT_VER)) {
+		printf("\nSoftware version doesn't match, must be %s\n",
+			SOFT_VER);
 	}
 
 	power_off(fd, i2c_fd);
@@ -264,6 +260,7 @@ flash_check(int fd)
 	int image_size;
 	char md5c_cmd[100];
 	char md5sum[33];
+	char boot_str[] = "NuttShell";
 	struct stat image_stat;
 	
 	flush(fd);
@@ -275,7 +272,7 @@ flash_check(int fd)
 	
 	calculate_md5sum(md5sum, sizeof(md5sum));
 	
-	if (read_from_logger(fd, SOFT_REV, DONT_FLUSH, BOOT_CHECK_TIMEOUT)) {
+	if (read_from_logger(fd, boot_str, DONT_FLUSH, BOOT_CHECK_TIMEOUT)) {
 		reset_logger();
 	}	
 
@@ -725,10 +722,10 @@ inputs_test(int fd, int i2c_fd)
 }
 
 int 
-soft_rev_check(int fd, char *soft_ver)
+soft_ver_check(int fd, char *soft_ver)
 {
 	write_to_logger(fd, "uname -a\n");
-	return read_from_logger(fd, soft_ver, FLUSH, 0.5);
+	return read_from_logger(fd, SOFT_VER, FLUSH, 0.5);
 }
 
 void 

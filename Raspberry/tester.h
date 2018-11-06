@@ -10,7 +10,7 @@
 #define NUCLEO_PATH	"/media/pi/NODE_L476RG"
 #define IMAGE_PATH	"/home/pi/sourceCodes/test/" \
 			"DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin" 
-#define SOFT_REV	"NuttX-0.4.27"
+#define SOFT_VER	"0.4.27"
 #define UART_PORT	"/dev/ttyS0"
 #define I2C_PORT	"/dev/i2c-1"
 
@@ -34,7 +34,7 @@ int gsm_test(int fd, int i2c_fd, char *apn);
 int inputs_config(int fd);
 int generate_pulses(int fd, int i2c_fd);
 int inputs_test(int fd, int i2c_fd);
-int soft_rev_check(int fd, char *soft_ver);
+int soft_ver_check(int fd, char *soft_ver);
 void print_ok();
 void print_fail();
 void power_off(int fd, int i2c_fd);
