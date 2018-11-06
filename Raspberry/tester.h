@@ -36,6 +36,7 @@ int inputs_test(int fd, int i2c_fd);
 int soft_ver_check(int fd, char *soft_ver);
 void print_ok();
 void print_fail();
+void print_error_msg(char *err_msg);
 void power_off(int fd, int i2c_fd);
 double calculate_time(time_t *start);
 void reset_logger();

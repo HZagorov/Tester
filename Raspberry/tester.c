@@ -40,7 +40,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	snprintf(apn_cmd, sizeof apn_cmd, 
+	snprintf(apn_cmd, sizeof(apn_cmd), 
 		 "printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
 		 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
@@ -86,9 +86,7 @@ main(int argc, char *argv[])
 		|| factory_write(fd, fct_str, apn_cmd)) { 
 	
 		power_off(fd, i2c_fd);
-		printf("\033[1;31m");
-		printf("Test failed\n");
-		printf("\033[0;m");
+		print_error_msg("Test failed\n");
 		return -1;
 	}
 	
@@ -198,7 +196,7 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 		}
 		else if (FD_ISSET(fd, &rfds)) {
 			rx_length = read(fd, buf, 255);
-		  	buf[rx_length] = 0;
+		  	buf[rx_length] = '\0';
 			if (!flush) { 
 				printf("%s", buf);
 			}
@@ -271,7 +269,7 @@ flash_check(int fd)
 		return 0;
 	} else {
 		print_fail();
-		printf("Flash check failed\n");
+		print_error_msg("Flash check failed\n");
 		return -1;
 	}
 }
@@ -284,7 +282,7 @@ flash_logger(int fd)
 	char test_msg[] = "Programming DUT -    ";
 	char nucleo_path[100];
 	
-	snprintf(nucleo_path, sizeof nucleo_path,
+	snprintf(nucleo_path, sizeof(nucleo_path),
 		 "%s%s", NUCLEO_PATH, "/image.bin");
 
 	printf("\n---------------------\n");
@@ -296,7 +294,7 @@ flash_logger(int fd)
 	
 	if (src_fd == -1 || dst_fd == -1) {
 		print_fail();
-		perror("Unable to open.");
+		perror("Unable to open");
 	} else {
 		while (1) {
 			nread = read(src_fd, buf, 4096);
@@ -327,9 +325,7 @@ flash_logger(int fd)
 		}
 	}
 
-	printf("\033[0;31m");
-	printf("Programming failed\n");
-	printf("\033[0;m");
+	print_error_msg("Programming failed\n");
 	close(src_fd);
 	close(dst_fd);
 	return -1;
@@ -346,18 +342,18 @@ fs_write(int fd)
 		"mkfatfs /dev/ifbank2r\n",
 		"mount -t vfat /dev/ifbank2r /rsvd\n"
 	};
-
 	
 	if (write_to_logger(fd, umount_mnt_cmd)
 		||write_to_logger(fd, umount_rsvd_cmd)){
 
-		printf("\033[0;31m");
-		printf("File system config write failed\n");
-		printf("\033[0;m");
+		print_error_msg("File system config write failed\n");
 		return -1;
 	}
 	for (int i = 0; i < 4; i++) {
-		write_to_logger(fd, fs_cmds[i]);
+		if (write_to_logger(fd, fs_cmds[i])){
+			print_error_msg("File system config write failed\n");
+			return -1;
+		}
 	}
 
 	flush(fd);
@@ -376,10 +372,8 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		|| write_to_logger(fd, "factory -c\n") 
 		||read_from_logger(fd, fct_comp_str, DONT_FLUSH, 2)) {
 
-		printf("\033[0;31m");
 		//printf("Probably DUT is in sleep mode\n");
-		printf("Mock factory config write failed\n");
-		printf("\033[0;m");
+		print_error_msg("Mock factory config write failed\n");
 		return -1;
 	}
 
@@ -408,7 +402,7 @@ factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 	} while (strlen(ser_num) > 10);
 
 	sprintf(fct_cmd, "factory -s %s -r %s -p %s -f\n",
-			ser_num, hard_rev, prod_num);
+		ser_num, hard_rev, prod_num);
 	
 	if (!write_to_logger(fd, fct_cmd) 
 		&& !read_from_logger(fd, fct_comp_str, FLUSH, 2) 
@@ -420,9 +414,7 @@ factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		return 0;	
 	}
 	else {
-		printf("\033[0;31m");
-		printf("Factory config write failed\n");
-		printf("\033[0m");
+		print_error_msg("Factory config write failed\n");
 		return -1;
 	}
 }
@@ -452,9 +444,7 @@ led_test(int fd)
 
 	if (write_to_logger(fd, led_off_cmd)) {	
 		print_fail();
-		printf("\033[0;31m");
-		printf("Stoping system LED failed\n");
-		printf("\033[0;m");
+		print_error_msg("Stoping system LED failed\n");
 		return -1;
 	}
 
@@ -511,13 +501,11 @@ gsm_test(int fd, int i2c_fd, char *apn)
 	printf("Setting GSM module, please wait 1 minute...\n");
 
 	if (!write_to_logger(fd, bd_cmd)
-		&& !read_from_logger(fd, bd_comp_str, DONT_FLUSH, 40)) {
+		&& !read_from_logger(fd, bd_comp_str, FLUSH, 40)) {
 
 		printf("Baud rate changed successfully\n");
 	} else { 
-		printf("\033[1;31m");
-		printf("Error while changing gsm baud rate\n");
-		printf("\033[0m");
+		print_error_msg("Error while changing gsm baud rate\n");
 		return -1;
 	}
 
@@ -531,23 +519,25 @@ gsm_test(int fd, int i2c_fd, char *apn)
 	}
 
 	//AT commands
-	write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n");
-	write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n");
+	if (write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n")
+		||write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n")) {
+
+		print_error_msg("Error while writing AT commands\n");
+		return -1;
+	}
 
 	printf("Pinging host %s ...\n", ip);
 
 	if (write_to_logger(fd, qftpc_cmd)) {	
-		printf("\033[1;31m");
-		printf("Error writing qftpc command\n");
-		printf("\033[0m");
+		print_error_msg("Error writing qftpc command\n");
 
 	}
 	write(1, test_msg, sizeof(test_msg)); 
 	
-	if (!read_from_logger(fd, error_msg , DONT_FLUSH, 30)) {
+	if (!read_from_logger(fd, error_msg, FLUSH, 30)) {
 		err = 1 - err;
 	}
-	else if (!read_from_logger(fd, ping_comp_str, DONT_FLUSH, 90)) {
+	else if (!read_from_logger(fd, ping_comp_str, FLUSH, 90)) {
 		print_ok();
 		return 0;
 	}	
@@ -557,9 +547,7 @@ gsm_test(int fd, int i2c_fd, char *apn)
 	flush(fd);
 	
 	if (err) {
-		printf("\033[0;31m");
-		printf("%s", error_msg);
-		printf("\033[0m");
+		print_error_msg(error_msg);
 	} else {
 		printf("Retest GSM? [y/n] ");
 		scanf(" %c", &response);
@@ -601,18 +589,14 @@ inputs_config(int fd)
 	printf("Setting the digital inputs' config, wait for 6 seconds\n");
 
 	if (write_to_logger (fd, new_line)) {		
-		printf("\033[0;31m");
-		printf("Inputs config write failed\n");
-		printf("\033[0m");
+		print_error_msg("Inputs config write failed\n");
 		return -1;
 	}
 	
 	for ( int i = 0; i < sizeof(cmd) / sizeof(cmd[0]) ; i++ ) {
 		sprintf (line, "printf \"%s\" >> /mnt/conf.cfg\n", cmd[i]);	
 	       	if (write_to_logger(fd, line) || write_to_logger(fd, new_line)) {
-			printf("\033[0;31m");
-			printf("Inputs config write failed\n");
-			printf("\033[0m");
+			print_error_msg("Inputs config write failed\n");
 			return -1;
 		}
 		read_from_logger(fd, NULL, FLUSH, 0.5); //wait 0.5s
@@ -670,9 +654,7 @@ generate_pulses(int fd, int i2c_fd)
 
 	printf("Starting alarm\n");
 	if (write_to_logger(fd, "alarm -f\n")) {
-		printf("\033[0;31m");
-		printf("Alarm write failed\n");
-		printf("\033[0m");
+		print_error_msg("Alarm write failed\n");
 		return -1;
 	}
 
@@ -727,8 +709,14 @@ print_ok()
 void 
 print_fail() 
 {
+	print_error_msg("FAIL\n");
+}
+
+void
+print_error_msg(char *err_msg)
+{
 	printf("\033[0;31m");
-	printf("FAIL\n");
+	printf("%s", err_msg);
 	printf("\033[0m");
 }
 
