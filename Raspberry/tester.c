@@ -17,38 +17,19 @@
 
 #include "tester.h"
 
-#define PUPIN	9	//pullup input
-#define NPWR	11	//nucleo power
-#define CAP 	17	//capacitor
-#define REED 	22	//reed ampule
-#define JMP 	24	//console jumper
-#define PWR 	27	//DUT power
-
-#define NUCLEO_PATH	"/media/pi/NODE_L476RG"
-#define IMAGE_PATH	"/home/pi/sourceCodes/test/" \
-					"DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin" 
-#define SOFT_REV	"NuttX-0.4.27"
-#define UART_PORT	"/dev/ttyS0"
-#define I2C_PORT	"/dev/i2c-1"
-
-#define DONT_FLUSH 0
-#define FLUSH 1
-
-
 int 
 main(int argc, char *argv[])
 {
-	char  *apn = "internet.vivacom.bg";
+	char  *apn = "mtm.tag.com";
 	int fd, i2c_fd, address = 0x50, opt, seconds, minutes;
 	time_t start, end;
 	double dif;
 	
 	//comparison strings
 	char fct_str[] = "written successfully";
-	char bd_str[] = "Successfully changed baud rate";
-	char ping_str[] = "Successfully ping host";
+	
 	char apn_cmd[200];
-	char soft_ver[7];
+	char soft_ver[7] = {0};
 
 	//check for input parameters - apn
 	while ((opt = getopt(argc, argv, "a:")) != -1) {
@@ -61,7 +42,7 @@ main(int argc, char *argv[])
 			return 0;
 		}
 	}
-	
+
 	strncpy(soft_ver, SOFT_REV+6, 6);
 	snprintf(apn_cmd, sizeof apn_cmd, 
 		"printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
@@ -71,22 +52,26 @@ main(int argc, char *argv[])
 	
 	//open serial port 
 	if ((fd = open(UART_PORT, O_RDWR | O_NOCTTY)) == -1) { // O_NDELAY
-		perror("Unable to open serial port\n");
+		perror("Unable to open serial port");
+		return -1;
 	}
 
 	//Connect to Nucleo	
 	if ((i2c_fd = open(I2C_PORT, O_RDWR)) < 0) {
 		printf("Failed to open the I2C bus\n");
+		close(fd);
 		return -1;
 	}
 
 	//set I2C Nucleo address
 	if (ioctl(i2c_fd, I2C_SLAVE, address)) {
 		printf("Failed to acquire bus access and/or talk to Nucleo.\n");
+		close(fd);
+		close(i2c_fd);
 		return -1;
 	}
 
-	setup_termios(fd);//set options for serial port
+	setup_termios(fd); //set options for serial port
 	
 	printf("=============");
 	printf("\033[1;32m");
@@ -100,11 +85,11 @@ main(int argc, char *argv[])
 		|| fs_write(fd) //file system config
 		|| mock_factory_write(fd, fct_str, apn_cmd) 
 		|| led_test(fd) 
-		|| gsm_test(fd, bd_str, ping_str, i2c_fd, apn) 
+		|| gsm_test(fd, i2c_fd, apn) 
 		|| inputs_test(fd, i2c_fd) 
 		|| factory_write(fd, fct_str, apn_cmd)) { 
-		
-		power_off(fd);
+	
+		power_off(fd, i2c_fd);
 		printf("\033[1;31m");
 		printf("Test failed\n");
 		printf("\033[0;m");
@@ -112,10 +97,11 @@ main(int argc, char *argv[])
 	}
 	
 	if (soft_rev_check(fd, soft_ver)) {
-		printf("\nSoftware revision doesn't match, must be %s\n", soft_ver);
+		printf("\nSoftware revision doesn't match, must be %s\n",
+			soft_ver);
 	}
 
-	power_off(fd);
+	power_off(fd, i2c_fd);
 	time(&end);
 	dif = difftime(end, start);
 	seconds = (int)dif % 60;
@@ -137,7 +123,7 @@ setup_devices()
 	//system ("gpio edge ?? rising");
 	char fail_path[100];
 
-	snprintf(fail_path, sizeof fail_path,"%s%s", NUCLEO_PATH, "/FAIL.TXT");
+	snprintf(fail_path, sizeof(fail_path), "%s/FAIL.TXT", NUCLEO_PATH);
 
 	wiringPiSetupGpio();
 	pinMode(PWR, OUTPUT);	
@@ -148,10 +134,14 @@ setup_devices()
 	digitalWrite(CAP, LOW);
 	digitalWrite(JMP, HIGH);
 
+
+	//check if nucleo file system appears 
 	if (open(NUCLEO_PATH, O_RDONLY) < 0) {
 		reset_nucleo(1);
 
 	} 
+	
+	//check for FAIL.TXT
 	if (open(fail_path, O_RDONLY) > 0) {
 		reset_nucleo(1);
 	}
@@ -164,10 +154,10 @@ setup_termios(int fd)
 
 	tcgetattr(fd, &options);
 	options.c_iflag &=  ~(ICRNL);
-	options.c_lflag |= ICANON;/*ICANON flag allows us to turn off
-							   	canonical mode.This means we will
-							   	be reading input byte-by-byte,
-							   	instead of line-by-line.*/
+	options.c_lflag |= ICANON; /*ICANON flag allows us to turn off
+			   	     canonical mode.This means we will
+			   	     be reading input byte-by-byte,
+			   	     instead of line-by-line.*/
 	//options.c_lflag |= (ICANON | ECHOE | ECHOK);
 	options.c_lflag &= ~( ECHO | ECHOE | ECHOK | ECHONL |IEXTEN | ISIG);
 	options.c_cflag = B38400 | CS8 |CLOCAL| CREAD;
@@ -190,13 +180,14 @@ compare_strings(char *buf, char *compstr)
 int 
 write_to_logger (int fd, char *str)
 {
-	int tx_length = write (fd, str , strlen(str));
+	int str_size = strlen(str);
+	int retval = write(fd, str, str_size);
 
-	if (tx_length < 0) {
-		perror("Write failed - ");
-		return -1;
-	} else { 
+	if (retval == str_size) {
 		return 0;
+	} else { 
+		perror("Write failed - ");
+		return - 1;
 	}
 }
 
@@ -230,7 +221,8 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 			}
 			if (comp_str != NULL) {	
 				if (!compare_strings(buf, comp_str)) {
-					char *pch = strstr(comp_str, "ERROR UMTS:");
+					char *pch;
+					pch = strstr(comp_str, "ERROR UMTS:");
 					if (pch) strcpy(comp_str, buf);
 					return 0;
 				}
@@ -250,11 +242,13 @@ flush(int fd)
 	read_from_logger(fd, NULL, FLUSH, 1 );
 }
 
-void calculate_md5sum(char *md5sum, int size){
-	#define MD5SUM_CMD "md5sum " IMAGE_PATH
-	
+void calculate_md5sum(char *md5sum, size_t size)
+{
+	char md5sum_cmd[100];
 	int i, ch;
-	FILE *p = popen(MD5SUM_CMD, "r");
+	
+	snprintf(md5sum_cmd, sizeof(md5sum_cmd), "md5sum %s", IMAGE_PATH);
+	FILE *p = popen(md5sum_cmd, "r");
 
 	for (i = 0; i < size - 1  && isxdigit(ch = fgetc(p)); i++) {
 		*md5sum++ = ch;
@@ -262,7 +256,6 @@ void calculate_md5sum(char *md5sum, int size){
 
 	*md5sum = '\0';
 	pclose(p);
-	#undef MD5SUM_CMD
 }
 
 int 
@@ -277,17 +270,18 @@ flash_check(int fd)
 
 	stat(IMAGE_PATH, &image_stat);
 	image_size = image_stat.st_size;
-	snprintf(md5c_cmd, sizeof md5c_cmd, 
-			 "md5c -f /dev/ifbank1 -e %d\n", image_size);
+	snprintf(md5c_cmd, sizeof(md5c_cmd), 
+		 "md5c -f /dev/ifbank1 -e %d\n", image_size);
 	
 	calculate_md5sum(md5sum, sizeof(md5sum));
 	
-	if (read_from_logger(fd, SOFT_REV, FLUSH, 20)) {
+	if (read_from_logger(fd, SOFT_REV, DONT_FLUSH, BOOT_CHECK_TIMEOUT)) {
 		reset_logger();
 	}	
 
 	if (!write_to_logger(fd, md5c_cmd)
-		&& !read_from_logger(fd, md5sum, FLUSH, 10)) {
+		&& !read_from_logger(fd, md5sum, DONT_FLUSH, 10)) {
+
 		print_ok();
 		return 0;
 	} else {
@@ -300,48 +294,51 @@ flash_check(int fd)
 int 
 flash_logger(int fd)
 {
-	int src_fd, dst_fd, n, m;
+	int src_fd, dst_fd, nread, nwrite;
 	unsigned char buf[4096];
 	char test_msg[] = "Programming DUT -    ";
 	char nucleo_path[100];
 	
 	snprintf(nucleo_path, sizeof nucleo_path,
-			 "%s%s", NUCLEO_PATH, "/image.bin");
+		 "%s%s", NUCLEO_PATH, "/image.bin");
 
 	printf("\n---------------------\n");
+	
 	write(1, test_msg, sizeof(test_msg)); 	
-
+	
 	src_fd = open(IMAGE_PATH, O_RDONLY);		
 	dst_fd = open(nucleo_path, O_CREAT | O_WRONLY);
 	
 	if (src_fd == -1 || dst_fd == -1) {
-		perror("Unable to open.\n ");
-	}
-
-	while (1) {
-		n = read( src_fd, buf, 4096);
+		print_fail();
+		perror("Unable to open.");
+	} else {
+		while (1) {
+			nread = read(src_fd, buf, 4096);
 		
-		if (n == -1) {
-			print_fail();
-			printf("Error reading file.\n");
-			break;
-		}
-		else if (n == 0) {
-			close(src_fd);
-			close(dst_fd);
-			return flash_check(fd);
-		}
+			if (nread == -1) {
+				print_fail();
+				printf("Error reading file.\n");
+				break;
+			}
+			else if (nread == 0) {
+				close(src_fd);
+				close(dst_fd);
+				return flash_check(fd);
+			}
 		
-		m = write(dst_fd, buf, n);
-		
-		if (m == -1) {
-			close(src_fd);
-			close(dst_fd);
-			printf("Before reset_nucleo\n");
-			reset_nucleo(1);
-			src_fd = open(IMAGE_PATH, O_RDONLY);		
-			dst_fd = open(nucleo_path, O_CREAT | O_WRONLY);
-			continue;
+			nwrite = write(dst_fd, buf, nread);
+			
+			//check if write failed due to FAIL.TXT 
+			if (nwrite == -1) {
+				close(src_fd);
+				close(dst_fd);
+				printf("Before reset_nucleo\n");
+				reset_nucleo(1);
+				src_fd = open(IMAGE_PATH, O_RDONLY);		
+				dst_fd = open(nucleo_path, O_CREAT | O_WRONLY);
+				continue;
+			}
 		}
 	}
 
@@ -358,17 +355,22 @@ fs_write(int fd)
 {
 	char umount_mnt_cmd[] = "umount /mnt\n";
 	char umount_rsvd_cmd[] = "umount /rsvd\n";
-	char fs_cmds[4][255] = 
-	{
-		{ "mkfatfs /dev/mtdblock0\n"},
-		{ "mount -t vfat /dev/mtdblock0 /mnt\n" },
-		{ "mkfatfs /dev/ifbank2r\n" },
-		{ "mount -t vfat /dev/ifbank2r /rsvd\n" }
+	char *fs_cmds[4] = {
+		"mkfatfs /dev/mtdblock0\n",
+		"mount -t vfat /dev/mtdblock0 /mnt\n",
+		"mkfatfs /dev/ifbank2r\n",
+		"mount -t vfat /dev/ifbank2r /rsvd\n"
 	};
 
-	write_to_logger(fd, umount_mnt_cmd);
-	write_to_logger(fd, umount_rsvd_cmd);	
 	
+	if (write_to_logger(fd, umount_mnt_cmd)
+		||write_to_logger(fd, umount_rsvd_cmd)){
+
+		printf("\033[0;31m");
+		printf("File system config write failed\n");
+		printf("\033[0;m");
+		return -1;
+	}
 	for (int i = 0; i < 4; i++) {
 		write_to_logger(fd, fs_cmds[i]);
 	}
@@ -378,20 +380,20 @@ fs_write(int fd)
 }
 
 int
-mock_factory_write(int fd, char *fct_str, char *apn_cmd) 
+mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd) 
 {
 	char mock_fct_cmd[] = "factory -s 1801001 -r VB1.0 "
-		   				  "-p DL-MINI-BAT36-D2-3G -f\n";
+		   	      "-p DL-MINI-BAT36-D2-3G -f\n";
     
 	if (write_to_logger(fd, mock_fct_cmd) 
-		|| read_from_logger(fd, fct_str, FLUSH, 2) 
+		|| read_from_logger(fd, fct_comp_str, DONT_FLUSH, 2) 
 		|| write_to_logger(fd, apn_cmd) 
 		|| write_to_logger(fd, "factory -c\n") 
-		||read_from_logger(fd, fct_str, FLUSH, 2)) {
+		||read_from_logger(fd, fct_comp_str, DONT_FLUSH, 2)) {
 
 		printf("\033[0;31m");
-		printf("Mock factory config write failed\n");
 		//printf("Probably DUT is in sleep mode\n");
+		printf("Mock factory config write failed\n");
 		printf("\033[0;m");
 		return -1;
 	}
@@ -400,7 +402,7 @@ mock_factory_write(int fd, char *fct_str, char *apn_cmd)
 }
 
 int 
-factory_write(int fd, char *fct_str, char *apn_cmd) 
+factory_write(int fd, char *fct_comp_str, char *apn_cmd) 
 {	
 	char ser_num[100] = {0};
 	char hard_rev[] = "VB1.0";
@@ -412,8 +414,10 @@ factory_write(int fd, char *fct_str, char *apn_cmd)
 	//factory input parameters	
 	do {
 		if (*ser_num) {
-			printf("Serial number must be less than 10 characters long\n");
+			printf("Serial number must be less"
+			       "than 10 characters long\n");
 		}
+
 		printf("Enter serial number: ");
 		scanf("%s", ser_num);
 	} while (strlen(ser_num) > 10);
@@ -422,10 +426,10 @@ factory_write(int fd, char *fct_str, char *apn_cmd)
 			ser_num, hard_rev, prod_num);
 	
 	if (!write_to_logger(fd, fct_cmd) 
-		&& !read_from_logger(fd, fct_str, FLUSH, 2) 
+		&& !read_from_logger(fd, fct_comp_str, FLUSH, 2) 
 		&& !write_to_logger(fd, apn_cmd) 
 		&& !write_to_logger(fd, "factory -c\n") 
-		&& !read_from_logger(fd, fct_str, FLUSH, 2)) {
+		&& !read_from_logger(fd, fct_comp_str, FLUSH, 2)) {
 
 		printf("Factory config successfully written\n");
 		return 0;	
@@ -442,21 +446,33 @@ int
 led_test(int fd) 
 {
 	char response;	
-	char led_on_cmd[] = "gpio -o 1 /dev/gpout/systemstatusled\n";
-	char led_off_cmd[] = "gpio -o 0 /dev/gpout/systemstatusled\n";
+	char led_on_cmd[] = "gpio -o 1 /dev/gpout_systemstatusled\n";
+	char led_off_cmd[] = "gpio -o 0 /dev/gpout_systemstatusled\n";
 
 	printf("\n---------------------\n");
 	printf("Starting system LED\n");
 	
-	write_to_logger(fd, led_on_cmd);
+	if (write_to_logger(fd, led_on_cmd)) {
+		printf("\033[0;31m");
+		printf("Starting system LED failed\n");
+		printf("\033[0;m");
+		return -1;
+	}
+
 	printf("Does the LED work? [y/n] ");
-	
 	scanf(" %c", &response);
 	printf("LED test -    ");
 
 	(response == 'y' || response == 'Y') ? print_ok() : print_fail();
 
-	write_to_logger(fd, led_off_cmd);
+	if (write_to_logger(fd, led_off_cmd)) {	
+		print_fail();
+		printf("\033[0;31m");
+		printf("Stoping system LED failed\n");
+		printf("\033[0;m");
+		return -1;
+	}
+
 	flush(fd);
 	return 0;
 }
@@ -464,7 +480,7 @@ led_test(int fd)
 int 
 measure_voltage(int fd, int i2c_fd) 
 {
-	char buf[20] = "Measure";
+	char buf[] = "Measure";
 	char response[10] = {0};
 	int voltage;
 
@@ -478,35 +494,40 @@ measure_voltage(int fd, int i2c_fd)
 		return 0;
 	}
 	else {
-		printf("VCCGSM is not set - %d mV\n", voltage);
+		printf("VCCGSM is NOT set - %d mV\n", voltage);
 		write_to_logger(fd, "reset\n");
 		return -1;
 	}
 }
 
 int
-gsm_test(int fd, char *bd_str,char *ping_str, int i2c_fd, char *apn)
+gsm_test(int fd, int i2c_fd, char *apn)
 {	
 	int err = 0;
 	char response;
+	char bd_comp_str[] = "Successfully changed baud rate";
+	char ping_comp_str[] = "Successfully ping host";
 	char test_msg[] = "GSM test -    ";
 	char error_msg[] = "ERROR UMTS:";
 	char qftpc_cmd[200];
-	char bd_cmd[] = "modem_config -d /dev/ttyS0 -g 1 -ar 9600 -e 15 -b 20\n";
+	char bd_cmd[] = "modem_config -d /dev/ttyS0 -g 1 "
+       			"-ar 9600 -e 15 -b 20\n";
 	char mondis_ip[] = "10.210.9.3";
 	char google_ip[] = "8.8.8.8";
 	char *ip = google_ip;
 	
 	if (!strcmp(apn, "cp-mondis")) {
-			ip = "10.210.9.3";
+		ip = mondis_ip;
 	}
-	snprintf(qftpc_cmd, 200, "qftpc -a %s -e 15 -b 20 -i %s\n",
-			 apn, ip);
+	snprintf(qftpc_cmd, sizeof(qftpc_cmd), 
+		 "qftpc -a %s -e 15 -b 20 -i %s\n", apn, ip);
 
 	printf("\n---------------------\n");
 	printf("Setting GSM module, please wait 1 minute...\n");
+
 	if (!write_to_logger(fd, bd_cmd)
-		&& !read_from_logger(fd, bd_str, DONT_FLUSH, 40)) {
+		&& !read_from_logger(fd, bd_comp_str, DONT_FLUSH, 40)) {
+
 		printf("Baud rate changed successfully\n");
 	} else { 
 		printf("\033[1;31m");
@@ -529,13 +550,19 @@ gsm_test(int fd, char *bd_str,char *ping_str, int i2c_fd, char *apn)
 	write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n");
 
 	printf("Pinging host %s ...\n", ip);
-	write_to_logger(fd, qftpc_cmd);
+
+	if (write_to_logger(fd, qftpc_cmd)) {	
+		printf("\033[1;31m");
+		printf("Error writing qftpc command\n");
+		printf("\033[0m");
+
+	}
 	write(1, test_msg, sizeof(test_msg)); 
 	
-	if (!read_from_logger(fd, error_msg , DONT_FLUSH, 25)) {
+	if (!read_from_logger(fd, error_msg , DONT_FLUSH, 30)) {
 		err = 1 - err;
 	}
-	else if (!read_from_logger(fd, ping_str, DONT_FLUSH, 35)) {
+	else if (!read_from_logger(fd, ping_comp_str, DONT_FLUSH, 90)) {
 		print_ok();
 		return 0;
 	}	
@@ -552,51 +579,62 @@ gsm_test(int fd, char *bd_str,char *ping_str, int i2c_fd, char *apn)
 		printf("Retest GSM? [y/n] ");
 		scanf(" %c", &response);
 		if (response == 'y' || response == 'Y') {
-			return gsm_test(fd, bd_str, ping_str, i2c_fd, apn);
+			return gsm_test(fd, i2c_fd, apn);
 		}
 	}
 
-	return 1;
+	return -1;
 }
 
-void 
+int 
 inputs_config(int fd)
 {
-	char new_line[50] = "printf \"\\n\" >> /mnt/conf.cfg\n";
+	char new_line[] = "printf \"\\n\" >> /mnt/conf.cfg\n";
 	char line[50];
 	char buf[256];
+	int ret;
 
-	char cmd[][50] = 
-	{
-		{ "lptim1_state enable" },
-		{ "lptim1_init_value -1" },
-		{ "lptim1_avr_gain 1.0" },
+	char *cmd[12] = {
+		"lptim1_state enable",
+		"lptim1_init_value -1",
+		"lptim1_avr_gain 1.0",
 		
-		{ "lptim1_count_gain 1.0" },
-		{ "lptim1_log_avr enable" },
-		{ "lptim1_log_count enable" },
+		"lptim1_count_gain 1.0",
+		"lptim1_log_avr enable",
+		"lptim1_log_count enable",
 		
-		{ "lptim2_state enable" },
-		{ "lptim2_init_value 0" },
-		{ "lptim2_avr_gain 1.0" },
+		"lptim2_state enable",
+		"lptim2_init_value 0",
+		"lptim2_avr_gain 1.0",
 
-		{ "lptim2_count_gain 1.0" },
-		{ "lptim2_log_avr enable" },
-		{ "lptim2_log_count enable" }
-	};
+		"lptim2_count_gain 1.0",
+		"lptim2_log_avr enable",
+		"lptim2_log_count enable"
+};
 
 
 	printf("Setting the digital inputs' config, wait for 6 seconds\n");
-	write_to_logger (fd, new_line);
+
+	if (write_to_logger (fd, new_line)) {		
+		printf("\033[0;31m");
+		printf("Inputs config write failed\n");
+		printf("\033[0m");
+		return -1;
+	}
 	
-	for ( int i = 0; i < 12 ; i++ ) {
-		sprintf (line, "printf \"%s\" >> /mnt/conf.cfg\n", cmd[i]);
-		write_to_logger(fd, line);
-		write_to_logger(fd, new_line);
-		read_from_logger(fd, NULL, FLUSH, 0.5);
+	for ( int i = 0; i < sizeof(cmd) / sizeof(cmd[0]) ; i++ ) {
+		sprintf (line, "printf \"%s\" >> /mnt/conf.cfg\n", cmd[i]);	
+	       	if (write_to_logger(fd, line) || write_to_logger(fd, new_line)) {
+			printf("\033[0;31m");
+			printf("Inputs config write failed\n");
+			printf("\033[0m");
+			return -1;
+		}
+		read_from_logger(fd, NULL, FLUSH, 0.5); //wait 0.5s
 	}
 
 	printf("Inputs config written\n");
+	return 0;
 }
 
 int 
@@ -606,26 +644,28 @@ reed_test(int fd)
 	char alarm_str[] ="AT+QPOWD=1";
 	char reed_str[] = "Reed clicked for 3s.";
 	
+	flush(fd);	
 	printf("\n---------------------\n");
 	printf("Wait for DUT to enter sleep mode...\n");
 
 	if (!read_from_logger(fd, alarm_str, FLUSH, 120)) {
 		printf("Turning magnet on\n");	
 		write(1, test_msg, sizeof(test_msg));
-		digitalWrite(22, HIGH);
+		digitalWrite(REED, HIGH);
 		
-		if (!read_from_logger(fd, reed_str, FLUSH, 10)) {
+		if (!read_from_logger(fd, reed_str, FLUSH, 15)) {
+			digitalWrite(REED, LOW);
 			print_ok();
-			write_to_logger(fd, "reset\n");
-			return 0;
-		} else {
+			return write_to_logger(fd, "reset\n");
+		} else { 
+			digitalWrite(REED, LOW);
 			print_fail();
+
 			printf("Activate reed ampule by hand\n");
 			if (!read_from_logger(fd, reed_str, FLUSH, 20)) {
 				write(1, test_msg, sizeof(test_msg));
 				print_ok();
-				write_to_logger(fd, "reset\n");
-				return 0;
+				return	write_to_logger(fd, "reset\n");
 			}
 		}
 	}  
@@ -639,12 +679,18 @@ reed_test(int fd)
 int 
 generate_pulses(int fd, int i2c_fd) 
 {
-	char buf[20] = "Generate";
+	char buf[] = "Generate";
 	char alarm_str[] = "Alarm Ampule-Reed received.";
 	char test_msg[] = "Inputs test -    ";
 
 	printf("Starting alarm\n");
-	write_to_logger(fd, "alarm -f\n");
+	if (write_to_logger(fd, "alarm -f\n")) {
+		printf("\033[0;31m");
+		printf("Alarm write failed\n");
+		printf("\033[0m");
+		return -1;
+	}
+
 	write(1, test_msg, sizeof(test_msg));
 
 	if (!read_from_logger(fd, alarm_str, FLUSH, 2)) {
@@ -657,7 +703,7 @@ generate_pulses(int fd, int i2c_fd)
 			&& !read_from_logger(fd, "95", FLUSH, 0.5)) {
 
 			print_ok();
-			flush(fd);
+			//flush(fd);
 			return 0;				
 		} else {
 			print_fail();
@@ -674,9 +720,8 @@ int
 inputs_test(int fd, int i2c_fd) 
 {
 	printf("\n---------------------\n");
-	inputs_config(fd);
-	return (generate_pulses(fd, i2c_fd) 
-			|| reed_test(fd));
+	return (inputs_config(fd) || generate_pulses(fd, i2c_fd) 
+		|| reed_test(fd));
 }
 
 int 
@@ -703,9 +748,10 @@ print_fail()
 }
 
 void 
-power_off(int fd)
+power_off(int fd, int i2c_fd)
 {
 	close(fd);
+	close(i2c_fd);
 	digitalWrite(PWR, LOW);
 	digitalWrite(JMP, LOW);
 	digitalWrite(REED, LOW);
@@ -753,16 +799,3 @@ reset_nucleo(int sleeptime)
 	//	}		
 	} while (open(NUCLEO_PATH, O_RDONLY) < 0);
 }
-
-void 
-open_fds(int *src_fd, int *dst_fd)
-{
-//	if (*src_fd || *dst_fd ){
-//		close(*src_fd);
-//		close(*dst_fd);
-//	}		
-	*src_fd = open(IMAGE_PATH, O_RDONLY);		
-	*dst_fd = open(NUCLEO_PATH "image.bin", O_CREAT | O_WRONLY);
-	//if (*src_fd == -1 || *dst_fd == -1) perror("Unable to open.\n ");
-}
-
