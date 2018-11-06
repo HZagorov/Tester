@@ -161,19 +161,6 @@ setup_termios(int fd)
 }
 
 int 
-compare_strings(char *buf, char *compstr) 
-{
-	char *pch = strstr(buf, compstr);	
-
-//	printf("buf = %scompstr = %s\n",buf, compstr);
-	if (pch) {
-		return 0;
-	} else { 
-		return 1;
-	}
-}
-
-int 
 write_to_logger (int fd, char *str)
 {
 	int str_size = strlen(str);
@@ -216,10 +203,11 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 				printf("%s", buf);
 			}
 			if (comp_str != NULL) {	
-				if (!compare_strings(buf, comp_str)) {
-					char *pch;
-					pch = strstr(comp_str, "ERROR UMTS:");
-					if (pch) strcpy(comp_str, buf);
+				char *pch = strstr(buf,comp_str);
+				if (pch) {
+					if (pch = strstr(comp_str,
+							 "ERROR UMTS:"))	
+						strcpy(comp_str,buf);
 					return 0;
 				}
 			}

@@ -19,7 +19,6 @@
 
 void setup_devices();
 void setup_termios(int fd);
-int compare_strings(char *buf, char *compstr);
 int write_to_logger(int fd, char *str);
 int read_from_logger(int fd, char *comp_str, int flush, float timeout);
 void flush(int fd);
@@ -41,4 +40,3 @@ void power_off(int fd, int i2c_fd);
 double calculate_time(time_t *start);
 void reset_logger();
 void reset_nucleo(int sleeptime);
-void open_fds(int *src_fd, int *dst_fd);
