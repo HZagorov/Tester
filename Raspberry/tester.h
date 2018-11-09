@@ -5,7 +5,6 @@
 #define JMP 	24	//console jumper
 #define PWR 	27	//DUT power
 
-#define BOOT_CHECK_TIMEOUT 20
 
 #define NUCLEO_PATH	"/media/pi/NODE_L476RG"
 #define IMAGE_PATH	"/home/pi/sourceCodes/test/" \
@@ -16,6 +15,22 @@
 
 #define DONT_FLUSH 0
 #define FLUSH 1
+
+#define MD5SUM_HASH_SIZE 33
+
+#define FLUSH_TIMEOUT 1
+#define BOOT_CHECK_TIMEOUT 20
+#define MD5SUM_TIMEOUT 2
+#define FACTORY_TIMEOUT 2
+#define UMTS_TIMEOUT 40
+#define UMTS_ERROR_TIMEOUT 30
+#define PING_TIMEOUT 90
+#define INPUTS_CONF_SLEEP 0.5
+#define SLEEP_TIMEOUT 120
+#define EM_TIMEOUT 15	//electromagnet timeout
+#define REED_CHECK_TIMEOUT 20 
+#define ALARM_TIMEOUT 2
+#define PULSE_TIMEOUT 0.5
 
 void setup_devices();
 void setup_termios(int fd);

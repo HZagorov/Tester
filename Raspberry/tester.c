@@ -221,7 +221,7 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 void 
 flush(int fd)
 {
-	read_from_logger(fd, NULL, FLUSH, 1 );
+	read_from_logger(fd, NULL, FLUSH, FLUSH_TIMEOUT );
 }
 
 void calculate_md5sum(char *md5sum, size_t size)
@@ -245,7 +245,7 @@ flash_check(int fd)
 {
 	int image_size;
 	char md5c_cmd[100];
-	char md5sum[33];
+	char md5sum[MD5SUM_HASH_SIZE];
 	char boot_str[] = "NuttShell";
 	struct stat image_stat;
 	
@@ -263,7 +263,7 @@ flash_check(int fd)
 	}	
 
 	if (!write_to_logger(fd, md5c_cmd)
-		&& !read_from_logger(fd, md5sum, DONT_FLUSH, 10)) {
+		&& !read_from_logger(fd, md5sum, DONT_FLUSH, MD5SUM_TIMEOUT )) {
 
 		print_ok();
 		return 0;
@@ -367,10 +367,12 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		   	      "-p DL-MINI-BAT36-D2-3G -f\n";
     
 	if (write_to_logger(fd, mock_fct_cmd) 
-		|| read_from_logger(fd, fct_comp_str, DONT_FLUSH, 2) 
+		|| read_from_logger(fd, fct_comp_str, DONT_FLUSH, 
+				    FACTORY_TIMEOUT) 
 		|| write_to_logger(fd, apn_cmd) 
 		|| write_to_logger(fd, "factory -c\n") 
-		||read_from_logger(fd, fct_comp_str, DONT_FLUSH, 2)) {
+		|| read_from_logger(fd, fct_comp_str, DONT_FLUSH,
+				    FACTORY_TIMEOUT)) {
 
 		//printf("Probably DUT is in sleep mode\n");
 		print_error_msg("Mock factory config write failed\n");
@@ -383,10 +385,10 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 int 
 factory_write(int fd, char *fct_comp_str, char *apn_cmd) 
 {	
-	char ser_num[100] = {0};
+	char ser_num[10] = {0};
 	char hard_rev[] = "VB1.0";
 	char prod_num[] = "DL-MINI-BAT36-D2-3G";
-	char fct_cmd[255];
+	char fct_cmd[100];
 
 	printf("\n---------------------\n");
 
@@ -405,10 +407,11 @@ factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		ser_num, hard_rev, prod_num);
 	
 	if (!write_to_logger(fd, fct_cmd) 
-		&& !read_from_logger(fd, fct_comp_str, FLUSH, 2) 
+		&& !read_from_logger(fd, fct_comp_str, FLUSH, FACTORY_TIMEOUT) 
 		&& !write_to_logger(fd, apn_cmd) 
 		&& !write_to_logger(fd, "factory -c\n") 
-		&& !read_from_logger(fd, fct_comp_str, FLUSH, 2)) {
+		&& !read_from_logger(fd, fct_comp_str, FLUSH,
+		       		     FACTORY_TIMEOUT)) {
 
 		printf("Factory config successfully written\n");
 		return 0;	
@@ -501,7 +504,7 @@ gsm_test(int fd, int i2c_fd, char *apn)
 	printf("Setting GSM module, please wait 1 minute...\n");
 
 	if (!write_to_logger(fd, bd_cmd)
-		&& !read_from_logger(fd, bd_comp_str, FLUSH, 40)) {
+		&& !read_from_logger(fd, bd_comp_str, FLUSH, UMTS_TIMEOUT)) {
 
 		printf("Baud rate changed successfully\n");
 	} else { 
@@ -534,10 +537,10 @@ gsm_test(int fd, int i2c_fd, char *apn)
 	}
 	write(1, test_msg, sizeof(test_msg)); 
 	
-	if (!read_from_logger(fd, error_msg, FLUSH, 30)) {
+	if (!read_from_logger(fd, error_msg, FLUSH, UMTS_ERROR_TIMEOUT)) {
 		err = 1 - err;
 	}
-	else if (!read_from_logger(fd, ping_comp_str, FLUSH, 90)) {
+	else if (!read_from_logger(fd, ping_comp_str, FLUSH, PING_TIMEOUT)) {
 		print_ok();
 		return 0;
 	}	
@@ -599,7 +602,7 @@ inputs_config(int fd)
 			print_error_msg("Inputs config write failed\n");
 			return -1;
 		}
-		read_from_logger(fd, NULL, FLUSH, 0.5); //wait 0.5s
+		read_from_logger(fd, NULL, FLUSH, INPUTS_CONF_SLEEP);//wait 0.5s
 	}
 
 	printf("Inputs config written\n");
@@ -617,12 +620,12 @@ reed_test(int fd)
 	printf("\n---------------------\n");
 	printf("Wait for DUT to enter sleep mode...\n");
 
-	if (!read_from_logger(fd, alarm_str, FLUSH, 120)) {
+	if (!read_from_logger(fd, alarm_str, FLUSH, SLEEP_TIMEOUT)) {
 		printf("Turning magnet on\n");	
 		write(1, test_msg, sizeof(test_msg));
 		digitalWrite(REED, HIGH);
 		
-		if (!read_from_logger(fd, reed_str, FLUSH, 15)) {
+		if (!read_from_logger(fd, reed_str, FLUSH, EM_TIMEOUT)) {
 			digitalWrite(REED, LOW);
 			print_ok();
 			return write_to_logger(fd, "reset\n");
@@ -631,7 +634,8 @@ reed_test(int fd)
 			print_fail();
 
 			printf("Activate reed ampule by hand\n");
-			if (!read_from_logger(fd, reed_str, FLUSH, 20)) {
+			if (!read_from_logger(fd, reed_str, FLUSH,
+					      REED_CHECK_TIMEOUT)) {
 				write(1, test_msg, sizeof(test_msg));
 				print_ok();
 				return	write_to_logger(fd, "reset\n");
@@ -660,14 +664,14 @@ generate_pulses(int fd, int i2c_fd)
 
 	write(1, test_msg, sizeof(test_msg));
 
-	if (!read_from_logger(fd, alarm_str, FLUSH, 2)) {
+	if (!read_from_logger(fd, alarm_str, FLUSH, ALARM_TIMEOUT)) {
 		write(i2c_fd, buf, strlen(buf));
-		read_from_logger(fd, NULL, FLUSH, 1.5);
-			
+		sleep(1); //wait for nucleo to generate pulses	
+
 		if (!write_to_logger(fd, "cat /dev/lptim1\n") 
-			&& !read_from_logger(fd, "96", FLUSH, 0.5) 
+			&& !read_from_logger(fd, "96", FLUSH, PULSE_TIMEOUT) 
 			&& !write_to_logger(fd, "cat /dev/lptim2\n") 
-			&& !read_from_logger(fd, "95", FLUSH, 0.5)) {
+			&& !read_from_logger(fd, "95", FLUSH, PULSE_TIMEOUT)) {
 
 			print_ok();
 			//flush(fd);
