@@ -83,7 +83,7 @@ main(int argc, char *argv[])
 		|| led_test(fd) 
 		|| gsm_test(fd, i2c_fd, apn) 
 		|| inputs_test(fd, i2c_fd) 
-		|| factory_write(fd, fct_str, apn_cmd)) { 
+		|| factory_write(fd, fct_str, apn_cmd) ) { 
 	
 		power_off(fd, i2c_fd);
 		print_error_msg("Test failed\n");
@@ -106,7 +106,6 @@ main(int argc, char *argv[])
 	printf("Test ended successfully!\n");
 	printf("\033[0m");
 	printf("Total test time = %d.%.2dm\n", minutes, seconds);
-	
 	return 0;
 }
 
@@ -128,13 +127,11 @@ setup_devices()
 	digitalWrite(CAP, LOW);
 	digitalWrite(JMP, HIGH);
 
-
 	//check if nucleo file system appears 
 	if (open(NUCLEO_PATH, O_RDONLY) < 0) {
 		reset_nucleo(1);
 
-	} 
-	
+	} 	
 	//check for FAIL.TXT
 	if (open(fail_path, O_RDONLY) > 0) {
 		reset_nucleo(1);
@@ -324,7 +321,6 @@ flash_logger(int fd)
 			}
 		}
 	}
-
 	print_error_msg("Programming failed\n");
 	close(src_fd);
 	close(dst_fd);
@@ -355,7 +351,6 @@ fs_write(int fd)
 			return -1;
 		}
 	}
-
 	flush(fd);
 	return 0;	
 }
@@ -378,7 +373,6 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		print_error_msg("Mock factory config write failed\n");
 		return -1;
 	}
-
 	return 0;
 }
 
@@ -450,7 +444,6 @@ led_test(int fd)
 		print_error_msg("Stoping system LED failed\n");
 		return -1;
 	}
-
 	flush(fd);
 	return 0;
 }
@@ -558,7 +551,6 @@ gsm_test(int fd, int i2c_fd, char *apn)
 			return gsm_test(fd, i2c_fd, apn);
 		}
 	}
-
 	return -1;
 }
 
@@ -586,7 +578,7 @@ inputs_config(int fd)
 		"lptim2_count_gain 1.0",
 		"lptim2_log_avr enable",
 		"lptim2_log_count enable"
-};
+	};
 
 
 	printf("Setting the digital inputs' config, wait for 6 seconds\n");
@@ -604,7 +596,6 @@ inputs_config(int fd)
 		}
 		read_from_logger(fd, NULL, FLUSH, INPUTS_CONF_SLEEP);//wait 0.5s
 	}
-
 	printf("Inputs config written\n");
 	return 0;
 }
@@ -642,7 +633,6 @@ reed_test(int fd)
 			}
 		}
 	}  
-
 	write(1, test_msg, sizeof(test_msg));
 	print_fail();
 	write_to_logger(fd, "reset\n");
@@ -681,9 +671,8 @@ generate_pulses(int fd, int i2c_fd)
 			return -1;
 		}		
 	}
-
-	 print_fail();
-	 return -1;			
+	print_fail();
+	return -1;			
 }
 
 
@@ -765,14 +754,19 @@ reset_nucleo(int sleeptime)
 	digitalWrite(NPWR, HIGH);
 	pinMode(PUPIN, INPUT);
 	pullUpDnControl(PUPIN, PUD_UP);
-	//sleep(2);
-	//time_t start;
-	//time (&start);
+//	time_t start;
+//	time(&start);
 	do {
-		;
-	//	if (calculate_time(&start) > 3){
-	//		printf("Running script\n");
-	//		system("sudo /home/pi/sourceCodes/test/mount_nucleo");
-	//	}		
-	} while (open(NUCLEO_PATH, O_RDONLY) < 0);
+	//	;
+/*		if (calculate_time(&start) > 8){
+			printf("Running script\n");
+			//system("sudo /home/pi/sourceCodes/test/mount_nucleo");
+			FILE *p = popen("mount_nucleo", "r");
+			pclose(p);
+			printf("Script executed\n");
+			sleep(10);
+			break;
+		}		
+*/
+		} while (open(NUCLEO_PATH, O_RDONLY) < 0);
 }
