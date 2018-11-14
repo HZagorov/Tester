@@ -25,8 +25,8 @@ main(int argc, char *argv[])
 	char *prod_num = DEF_PROD_NUM;
 	int fd, i2c_fd, opt, seconds, minutes;
 	int address = I2C_ADDRESS;
-	time_t start, end;
-	double dif;
+	time_t start;
+	double test_time;
 	
 	char fct_str[] = "written successfully";	
 	char apn_cmd[200];
@@ -79,22 +79,16 @@ main(int argc, char *argv[])
 	}
 
 	setup_termios(fd); // Set options for serial port
-	
-	printf("=============");
-	printf("\033[1;32m");
-	printf("TEST BEGIN");
-	printf("\033[0m");
-	printf("=============\n\n");
-	time(&start);
+	begin_test(&start);	
 
 	// Test conditions
 	if (flash_logger(fd)
-		|| fs_write(fd) // File system config
+	/*	|| fs_write(fd) // File system config
 		|| mock_factory_write(fd, fct_str, apn_cmd) 
 		|| led_test(fd) 
 		|| gsm_test(fd, i2c_fd, apn) 
 		|| inputs_test(fd, i2c_fd) 
-		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num)) {
+		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num)*/) {
 	
 		power_off(fd, i2c_fd);
 		print_error_msg("Test failed\n");
@@ -107,10 +101,9 @@ main(int argc, char *argv[])
 	}
 
 	power_off(fd, i2c_fd);
-	time(&end);
-	dif = difftime(end, start);
-	seconds = (int)dif % 60;
-	minutes = (dif - seconds) / 60;
+	test_time = calculate_time(&start);
+	seconds = (int) test_time % 60;
+	minutes = (test_time - seconds) / 60;
 
 	printf("\n---------------------\n");
 	printf("\033[1;32m");
@@ -164,6 +157,17 @@ setup_termios(int fd)
 	options.c_lflag &= ~( ECHO | ECHOE | ECHOK | ECHONL |IEXTEN | ISIG);
 	options.c_cflag = B38400 | CS8 |CLOCAL| CREAD;
 	tcsetattr (fd,TCSANOW, &options);	
+}
+
+void 
+begin_test(time_t *start)
+{
+	printf("=============");
+	printf("\033[1;32m");
+	printf("TEST BEGIN");
+	printf("\033[0m");
+	printf("=============\n\n");
+	time(start);
 }
 
 int 

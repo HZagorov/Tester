@@ -38,6 +38,7 @@
 
 void setup_devices();
 void setup_termios(int fd);
+void begin_test(time_t *start);
 int write_to_logger(int fd, char *str);
 int read_from_logger(int fd, char *comp_str, int flush, float timeout);
 void flush(int fd);
