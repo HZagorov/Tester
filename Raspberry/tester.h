@@ -12,6 +12,10 @@
 #define SOFT_VER	"0.4.27"
 #define UART_PORT	"/dev/ttyS0"
 #define I2C_PORT	"/dev/i2c-1"
+#define DEF_APN		"mtm.tag.com"
+#define I2C_ADDRESS	0x50
+#define DEF_HARD_REV	"VB1.0"
+#define DEF_PROD_NUM	"DL-MINI-BAT36-D2-3G"
 
 #define DONT_FLUSH 0
 #define FLUSH 1
@@ -41,7 +45,8 @@ int flash_check(int fd);
 int flash_logger(int fd);
 int fs_write(int fd);
 int mock_factory_write(int fd, char *fct_comp_str, char *apn);
-int factory_write(int fd, char *fct_comp_str, char *apn);
+int factory_write(int fd, char *fct_comp_str, char *apn,
+		  char *hard_rev, char *prod_num);
 int led_test(int fd);
 int measure_voltage(int fd, int i2c_fd);
 int gsm_test(int fd, int i2c_fd, char *apn);

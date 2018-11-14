@@ -20,22 +20,33 @@
 int 
 main(int argc, char *argv[])
 {
-	char  *apn = "mtm.tag.com";
-	int fd, i2c_fd, address = 0x50, opt, seconds, minutes;
+	char *apn = DEF_APN;
+	char *hard_rev = DEF_HARD_REV;
+	char *prod_num = DEF_PROD_NUM;
+	int fd, i2c_fd, opt, seconds, minutes;
+	int address = I2C_ADDRESS;
 	time_t start, end;
 	double dif;
 	
 	char fct_str[] = "written successfully";	
 	char apn_cmd[200];
 
-	//check for input parameters - apn
-	while ((opt = getopt(argc, argv, "a:")) != -1) {
+	// Check for input parameters
+	while ((opt = getopt(argc, argv, "a:h:p:")) != -1) {
 		switch (opt){
 		case 'a':
 			apn = optarg;
 			break;
+		case 'h':
+			hard_rev = optarg;
+			break;	
+		case 'p':
+			prod_num = optarg;
+			break;
 		default:
-			fprintf(stderr, "Usage %s [-a apn]\n", argv[0]);
+			fprintf(stderr, "Usage: %s [-a apn] "
+				"[-h hardware revision] "
+				"[-p product number]\n", argv[0]);
 			return 0;
 		}
 	}
@@ -44,22 +55,22 @@ main(int argc, char *argv[])
 		 "printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
 		 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
-	setup_devices(); //power up Nucleo and DUT
+	setup_devices(); // Power up Nucleo and DUT
 	
-	//open serial port 
+	// Open serial port 
 	if ((fd = open(UART_PORT, O_RDWR | O_NOCTTY)) == -1) { // O_NDELAY
 		perror("Unable to open serial port");
 		return -1;
 	}
 
-	//Connect to Nucleo	
+	// Connect to Nucleo	
 	if ((i2c_fd = open(I2C_PORT, O_RDWR)) < 0) {
 		printf("Failed to open the I2C bus\n");
 		close(fd);
 		return -1;
 	}
 
-	//set I2C Nucleo address
+	// Set I2C Nucleo address
 	if (ioctl(i2c_fd, I2C_SLAVE, address)) {
 		printf("Failed to acquire bus access and/or talk to Nucleo.\n");
 		close(fd);
@@ -67,7 +78,7 @@ main(int argc, char *argv[])
 		return -1;
 	}
 
-	setup_termios(fd); //set options for serial port
+	setup_termios(fd); // Set options for serial port
 	
 	printf("=============");
 	printf("\033[1;32m");
@@ -76,14 +87,14 @@ main(int argc, char *argv[])
 	printf("=============\n\n");
 	time(&start);
 
-	//test conditions
+	// Test conditions
 	if (flash_logger(fd)
-		|| fs_write(fd) //file system config
+		|| fs_write(fd) // File system config
 		|| mock_factory_write(fd, fct_str, apn_cmd) 
 		|| led_test(fd) 
 		|| gsm_test(fd, i2c_fd, apn) 
 		|| inputs_test(fd, i2c_fd) 
-		|| factory_write(fd, fct_str, apn_cmd) ) { 
+		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num)) {
 	
 		power_off(fd, i2c_fd);
 		print_error_msg("Test failed\n");
@@ -109,7 +120,7 @@ main(int argc, char *argv[])
 	return 0;
 }
 
-//setup GPIO pins and Nucleo
+// Setup GPIO pins and Nucleo
 void 
 setup_devices()
 {
@@ -127,12 +138,12 @@ setup_devices()
 	digitalWrite(CAP, LOW);
 	digitalWrite(JMP, HIGH);
 
-	//check if nucleo file system appears 
+	// Check if nucleo file system appears 
 	if (open(NUCLEO_PATH, O_RDONLY) < 0) {
 		reset_nucleo(1);
 
 	} 	
-	//check for FAIL.TXT
+	// Check for FAIL.TXT
 	if (open(fail_path, O_RDONLY) > 0) {
 		reset_nucleo(1);
 	}
@@ -179,8 +190,8 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 	fd_set rfds;
 	struct timeval tv;
 	
-	FD_ZERO(&rfds); //clears the file descriptor set
-	FD_SET(fd, &rfds); //add fd to the set
+	FD_ZERO(&rfds);		// Clears the file descriptor set
+	FD_SET(fd, &rfds);	// Add fd to the set
 
 	tv.tv_sec = 0;
 	tv.tv_usec = (int) (timeout * 1000000);
@@ -201,8 +212,9 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 				char *pch = strstr(buf,comp_str);
 				if (pch) {
 					if (pch = strstr(comp_str,
-							 "ERROR UMTS:"))	
+							 "ERROR UMTS:")) {	
 						strcpy(comp_str,buf);
+					}
 					return 0;
 				}
 			}
@@ -214,7 +226,7 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 	} 
 }
 
-//flush serial input
+// Flush serial input
 void 
 flush(int fd)
 {
@@ -309,7 +321,7 @@ flash_logger(int fd)
 		
 			nwrite = write(dst_fd, buf, nread);
 			
-			//check if write failed due to FAIL.TXT 
+			// Check if write failed due to FAIL.TXT 
 			if (nwrite == -1) {
 				close(src_fd);
 				close(dst_fd);
@@ -377,22 +389,20 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 }
 
 int 
-factory_write(int fd, char *fct_comp_str, char *apn_cmd) 
+factory_write(int fd, char *fct_comp_str, char *apn_cmd,
+	      char *hard_rev, char *prod_num) 
 {	
 	char ser_num[10] = {0};
-	char hard_rev[] = "VB1.0";
-	char prod_num[] = "DL-MINI-BAT36-D2-3G";
 	char fct_cmd[100];
 
 	printf("\n---------------------\n");
 
-	//factory input parameters	
+	// Factory input parameters	
 	do {
 		if (*ser_num) {
 			printf("Serial number must be less"
 			       "than 10 characters long\n");
 		}
-
 		printf("Enter serial number: ");
 		scanf("%s", ser_num);
 	} while (strlen(ser_num) > 10);
@@ -456,7 +466,7 @@ measure_voltage(int fd, int i2c_fd)
 	int voltage;
 
 	write(i2c_fd, buf, strlen(buf));
-	sleep(1); //wait for nucleo to make measurement
+	sleep(1);	//Wait for nucleo to make measurement
 	read(i2c_fd, response, 7);
 	voltage = atoi(response);
 
@@ -509,12 +519,12 @@ gsm_test(int fd, int i2c_fd, char *apn)
 //	getchar();
 //	getchar();
 
-	//check VCCGSM
+	// Check VCCGSM
 	if (measure_voltage(fd, i2c_fd)) {
 		return -1;	
 	}
 
-	//AT commands
+	// AT commands
 	if (write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n")
 		||write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n")) {
 
@@ -594,7 +604,7 @@ inputs_config(int fd)
 			print_error_msg("Inputs config write failed\n");
 			return -1;
 		}
-		read_from_logger(fd, NULL, FLUSH, INPUTS_CONF_SLEEP);//wait 0.5s
+		read_from_logger(fd, NULL, FLUSH, INPUTS_CONF_SLEEP);//Wait 0.5s
 	}
 	printf("Inputs config written\n");
 	return 0;
@@ -656,7 +666,7 @@ generate_pulses(int fd, int i2c_fd)
 
 	if (!read_from_logger(fd, alarm_str, FLUSH, ALARM_TIMEOUT)) {
 		write(i2c_fd, buf, strlen(buf));
-		sleep(1); //wait for nucleo to generate pulses	
+		sleep(1); // Wait for nucleo to generate pulses	
 
 		if (!write_to_logger(fd, "cat /dev/lptim1\n") 
 			&& !read_from_logger(fd, "96", FLUSH, PULSE_TIMEOUT) 
@@ -664,7 +674,6 @@ generate_pulses(int fd, int i2c_fd)
 			&& !read_from_logger(fd, "95", FLUSH, PULSE_TIMEOUT)) {
 
 			print_ok();
-			//flush(fd);
 			return 0;				
 		} else {
 			print_fail();
