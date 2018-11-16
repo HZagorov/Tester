@@ -110,7 +110,7 @@ power_devices()
 	digitalWrite(CAP, LOW);
 	digitalWrite(JMP, HIGH);
 
-	// Check if nucleo file system appears 
+	// Check if Nucleo file system appears 
 	if (open(NUCLEO_PATH, O_RDONLY) < 0) {
 		reset_nucleo(1);
 	} 	
@@ -118,13 +118,15 @@ power_devices()
 	if (open(fail_path, O_RDONLY) > 0) {
 		reset_nucleo(1);
 	}
-	// Reset if free space is insufficient
+	// Reset if Nucleo free space is insufficient
 	if (get_available_space(NUCLEO_PATH) < IMAGE_BLOCKS){
 		reset_nucleo(1);
 	}
 }
 
-int get_available_space(char *path){
+int 
+get_available_space(char *path)
+{
 	struct statvfs statfs;
 
 	statvfs(path, &statfs);
@@ -251,7 +253,8 @@ flush(int fd)
 	read_from_logger(fd, NULL, FLUSH, FLUSH_TIMEOUT );
 }
 
-void calculate_md5sum(char *md5sum, size_t size)
+void 
+calculate_md5sum(char *md5sum, size_t size)
 {
 	char md5sum_cmd[100];
 	int i, ch;
@@ -478,7 +481,7 @@ measure_voltage(int fd, int i2c_fd)
 	int voltage;
 
 	write(i2c_fd, buf, strlen(buf));
-	sleep(1);	//Wait for nucleo to make measurement
+	sleep(1);	//Wait for Nucleo to make measurement
 	read(i2c_fd, response, 7);
 	voltage = atoi(response);
 
@@ -678,7 +681,7 @@ generate_pulses(int fd, int i2c_fd)
 
 	if (!read_from_logger(fd, alarm_str, FLUSH, ALARM_TIMEOUT)) {
 		write(i2c_fd, buf, strlen(buf));
-		sleep(1); // Wait for nucleo to generate pulses	
+		sleep(1); // Wait for Nucleo to generate pulses	
 
 		if (!write_to_logger(fd, "cat /dev/lptim1\n") 
 			&& !read_from_logger(fd, "96", FLUSH, PULSE_TIMEOUT) 
