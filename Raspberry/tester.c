@@ -66,7 +66,7 @@ main(int argc, char *argv[])
 		|| fs_write(fd) // File system config
 		|| mock_factory_write(fd, fct_str, apn_cmd) 
 		|| led_test(fd) 
-	//	|| gsm_test(fd, i2c_fd, apn) 
+		|| gsm_test(fd, i2c_fd, apn) 
 		|| inputs_test(fd, i2c_fd) 
 		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num)) {
 	
@@ -97,7 +97,6 @@ main(int argc, char *argv[])
 void 
 power_devices()
 {
-	//system ("gpio edge ?? rising");
 	char fail_path[100];
 
 	snprintf(fail_path, sizeof(fail_path), "%s/FAIL.TXT", NUCLEO_PATH);
@@ -329,7 +328,7 @@ flash_logger(int fd)
 		
 			if (nread == -1) {
 				print_fail();
-				printf("Error reading file.\n");
+				printf("Error reading file\n");
 				break;
 			}
 			else if (nread == 0) {
@@ -338,17 +337,11 @@ flash_logger(int fd)
 				return flash_check(fd);
 			}
 		
-			nwrite = write(dst_fd, buf, nread);
-			
-			// Check if write failed due to FAIL.TXT 
+			nwrite = write(dst_fd, buf, nread);	
 			if (nwrite == -1) {
-				close(src_fd);
-				close(dst_fd);
-				printf("Before reset_nucleo\n");
-				reset_nucleo(1);
-				src_fd = open(IMAGE_PATH, O_RDONLY);		
-				dst_fd = open(nucleo_path, O_CREAT | O_WRONLY);
-				continue;
+				print_fail();
+				print_error_msg("Error writing\n");
+				break;
 			}
 		}
 	}
@@ -782,19 +775,7 @@ reset_nucleo(int sleeptime)
 	digitalWrite(NPWR, HIGH);
 	pinMode(PUPIN, INPUT);
 	pullUpDnControl(PUPIN, PUD_UP);
-//	time_t start;
-//	time(&start);
 	do {
-	//	;
-/*		if (calculate_time(&start) > 8){
-			printf("Running script\n");
-			//system("sudo /home/pi/sourceCodes/test/mount_nucleo");
-			FILE *p = popen("mount_nucleo", "r");
-			pclose(p);
-			printf("Script executed\n");
-			sleep(10);
-			break;
-		}		
-*/
-		} while (open(NUCLEO_PATH, O_RDONLY) < 0);
+		;
+	} while (open(NUCLEO_PATH, O_RDONLY) < 0);
 }
