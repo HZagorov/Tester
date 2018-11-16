@@ -21,6 +21,7 @@
 #define FLUSH 1
 
 #define MD5SUM_HASH_SIZE 33
+#define IMAGE_BLOCKS 65
 
 #define FLUSH_TIMEOUT 1
 #define BOOT_CHECK_TIMEOUT 20
@@ -36,7 +37,9 @@
 #define ALARM_TIMEOUT 2
 #define PULSE_TIMEOUT 0.5
 
-void setup_devices();
+void power_devices();
+int setup_devices(int *fd, int *i2c_fd);
+int get_available_space(char *path);
 void setup_termios(int fd);
 void begin_test(time_t *start);
 int write_to_logger(int fd, char *str);

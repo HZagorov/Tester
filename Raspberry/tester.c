@@ -17,6 +17,8 @@
 
 #include "tester.h"
 
+#include<sys/statvfs.h>
+
 int 
 main(int argc, char *argv[])
 {
@@ -24,7 +26,6 @@ main(int argc, char *argv[])
 	char *hard_rev = DEF_HARD_REV;
 	char *prod_num = DEF_PROD_NUM;
 	int fd, i2c_fd, opt, seconds, minutes;
-	int address = I2C_ADDRESS;
 	time_t start;
 	double test_time;
 	
@@ -55,40 +56,19 @@ main(int argc, char *argv[])
 		 "printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
 		 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
-	setup_devices(); // Power up Nucleo and DUT
-	
-	// Open serial port 
-	if ((fd = open(UART_PORT, O_RDWR | O_NOCTTY)) == -1) { // O_NDELAY
-		perror("Unable to open serial port");
-		return -1;
-	}
-
-	// Connect to Nucleo	
-	if ((i2c_fd = open(I2C_PORT, O_RDWR)) < 0) {
-		printf("Failed to open the I2C bus\n");
-		close(fd);
-		return -1;
-	}
-
-	// Set I2C Nucleo address
-	if (ioctl(i2c_fd, I2C_SLAVE, address)) {
-		printf("Failed to acquire bus access and/or talk to Nucleo.\n");
-		close(fd);
-		close(i2c_fd);
-		return -1;
-	}
-
+	power_devices();
+	setup_devices(&fd, &i2c_fd);
 	setup_termios(fd); // Set options for serial port
 	begin_test(&start);	
 
 	// Test conditions
 	if (flash_logger(fd)
-	/*	|| fs_write(fd) // File system config
+		|| fs_write(fd) // File system config
 		|| mock_factory_write(fd, fct_str, apn_cmd) 
 		|| led_test(fd) 
-		|| gsm_test(fd, i2c_fd, apn) 
+	//	|| gsm_test(fd, i2c_fd, apn) 
 		|| inputs_test(fd, i2c_fd) 
-		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num)*/) {
+		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num)) {
 	
 		power_off(fd, i2c_fd);
 		print_error_msg("Test failed\n");
@@ -115,7 +95,7 @@ main(int argc, char *argv[])
 
 // Setup GPIO pins and Nucleo
 void 
-setup_devices()
+power_devices()
 {
 	//system ("gpio edge ?? rising");
 	char fail_path[100];
@@ -134,11 +114,46 @@ setup_devices()
 	// Check if nucleo file system appears 
 	if (open(NUCLEO_PATH, O_RDONLY) < 0) {
 		reset_nucleo(1);
-
 	} 	
 	// Check for FAIL.TXT
 	if (open(fail_path, O_RDONLY) > 0) {
 		reset_nucleo(1);
+	}
+	// Reset if free space is insufficient
+	if (get_available_space(NUCLEO_PATH) < IMAGE_BLOCKS){
+		reset_nucleo(1);
+	}
+}
+
+int get_available_space(char *path){
+	struct statvfs statfs;
+
+	statvfs(path, &statfs);
+	return statfs.f_bfree;
+}
+
+int 
+setup_devices(int *fd, int *i2c_fd)
+{
+	// Open serial port 
+	if ((*fd = open(UART_PORT, O_RDWR | O_NOCTTY)) == -1) { // O_NDELAY
+		perror("Unable to open serial port");
+		return -1;
+	}
+
+	// Connect to Nucleo	
+	if ((*i2c_fd = open(I2C_PORT, O_RDWR)) < 0) {
+		printf("Failed to open the I2C bus\n");
+		close(*fd);
+		return -1;
+	}
+
+	// Set I2C Nucleo address
+	if (ioctl(*i2c_fd, I2C_SLAVE, I2C_ADDRESS)) {
+		printf("Failed to acquire bus access and/or talk to Nucleo.\n");
+		close(*fd);
+		close(*i2c_fd);
+		return -1;
 	}
 }
 
@@ -271,12 +286,12 @@ flash_check(int fd)
 	
 	calculate_md5sum(md5sum, sizeof(md5sum));
 	
-	if (read_from_logger(fd, boot_str, DONT_FLUSH, BOOT_CHECK_TIMEOUT)) {
+	if (read_from_logger(fd, boot_str, FLUSH, BOOT_CHECK_TIMEOUT)) {
 		reset_logger();
 	}	
 
 	if (!write_to_logger(fd, md5c_cmd)
-		&& !read_from_logger(fd, md5sum, DONT_FLUSH, MD5SUM_TIMEOUT )) {
+		&& !read_from_logger(fd, md5sum, FLUSH, MD5SUM_TIMEOUT )) {
 
 		print_ok();
 		return 0;
@@ -378,11 +393,11 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		   	      "-p DL-MINI-BAT36-D2-3G -f\n";
     
 	if (write_to_logger(fd, mock_fct_cmd) 
-		|| read_from_logger(fd, fct_comp_str, DONT_FLUSH, 
+		|| read_from_logger(fd, fct_comp_str, FLUSH, 
 				    FACTORY_TIMEOUT) 
 		|| write_to_logger(fd, apn_cmd) 
 		|| write_to_logger(fd, "factory -c\n") 
-		|| read_from_logger(fd, fct_comp_str, DONT_FLUSH,
+		|| read_from_logger(fd, fct_comp_str, FLUSH,
 				    FACTORY_TIMEOUT)) {
 
 		//printf("Probably DUT is in sleep mode\n");
