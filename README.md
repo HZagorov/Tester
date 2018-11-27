@@ -15,5 +15,5 @@ After this the project is ready to build.
 ## Compiling
 To compile the tester.c program run the following compile command
 ```
-gcc -o tester tester.c -lwiringPi
+gcc -o tester tester.c -lwiringPi `mysql_config --libs`
 ```
