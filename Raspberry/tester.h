@@ -6,8 +6,8 @@
 #define JMP 	24	//console jumper
 #define PWR 	27	//DUT power
 
-//Default APN
 #define DEF_APN		"mtm.tag.com"
+#define CAP_DISCH_TIME	30
 
 //Programming macros
 #define SOFT_VER	"0.4.27"
@@ -67,6 +67,8 @@ int flash_check(int fd);
 int flash_logger(int fd);
 int fs_write(int fd);
 int mock_factory_write(int fd, char *fct_comp_str, char *apn);
+void manual_serial_number_insert(char *serial_number);
+int insert_into_db(char *serial_number);
 int factory_write(int fd, char *fct_comp_str, char *apn,
 		  char *hard_rev, char *prod_num);
 int led_test(int fd);
@@ -79,7 +81,8 @@ int soft_ver_check(int fd);
 void print_ok();
 void print_fail();
 void print_error_msg(char *err_msg);
-void power_off(int fd, int i2c_fd);
+void close_fds(int fd_count, ...);
+void power_off();
 double calculate_time(time_t *start);
 void reset_logger();
 void reset_nucleo(int sleeptime);

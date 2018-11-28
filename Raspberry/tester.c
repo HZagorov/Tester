@@ -2,11 +2,14 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <linux/i2c-dev.h>
 
 #include <ctype.h>
 #include <fcntl.h>
 #include <math.h>
+#include <mysql/mysql.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +20,6 @@
 
 #include "tester.h"
 
-#include<sys/statvfs.h>
 
 int 
 main(int argc, char *argv[])
@@ -25,9 +27,8 @@ main(int argc, char *argv[])
 	char *apn = DEF_APN;
 	char *hard_rev = DEF_HARD_REV;
 	char *prod_num = DEF_PROD_NUM;
-	int fd, i2c_fd, opt, seconds, minutes;
+	int fd, i2c_fd, opt;
 	time_t start;
-	double test_time;
 	
 	char fct_str[] = "written successfully";	
 	char apn_cmd[200];
@@ -57,7 +58,9 @@ main(int argc, char *argv[])
 		 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
 	power_devices();
-	setup_devices(&fd, &i2c_fd);
+	if(setup_devices(&fd, &i2c_fd)){
+		power_off();
+	}
 	setup_termios(fd); // Set options for serial port
 	begin_test(&start);	
 
@@ -70,30 +73,22 @@ main(int argc, char *argv[])
 		|| inputs_test(fd, i2c_fd) 
 		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num)) {
 	
-		power_off(fd, i2c_fd);
+		close_fds(2, fd, i2c_fd);
+		power_off();
 		print_error_msg("Test failed\n");
 		return -1;
 	}
 	
-	if (soft_ver_check(fd, SOFT_VER)) {
-		printf("\nSoftware version doesn't match, must be %s\n",
-			SOFT_VER);
-	}
-
-	power_off(fd, i2c_fd);
-	test_time = calculate_time(&start);
-	seconds = (int) test_time % 60;
-	minutes = (test_time - seconds) / 60;
-
-	printf("\n---------------------\n");
-	printf("\033[1;32m");
-	printf("Test ended successfully!\n");
-	printf("\033[0m");
-	printf("Total test time = %d.%.2dm\n", minutes, seconds);
+	
+	soft_ver_check(fd);
+	close_fds(2, fd, i2c_fd);
+	power_off();
+	end_test(&start);
+	
 	return 0;
 }
 
-// Setup GPIO pins and Nucleo
+
 void 
 power_devices()
 {
@@ -122,6 +117,7 @@ power_devices()
 	if (get_available_space(NUCLEO_PATH) < IMAGE_BLOCKS){
 		reset_nucleo(1);
 	}
+
 }
 
 int 
@@ -152,8 +148,7 @@ setup_devices(int *fd, int *i2c_fd)
 	// Set I2C Nucleo address
 	if (ioctl(*i2c_fd, I2C_SLAVE, I2C_ADDRESS)) {
 		printf("Failed to acquire bus access and/or talk to Nucleo.\n");
-		close(*fd);
-		close(*i2c_fd);
+		close_fds(2, *fd, *i2c_fd);
 		return -1;
 	}
 }
@@ -335,8 +330,7 @@ flash_logger(int fd)
 				break;
 			}
 			else if (nread == 0) {
-				close(src_fd);
-				close(dst_fd);
+				close_fds(2, src_fd, dst_fd);
 				return flash_check(fd);
 			}
 		
@@ -349,8 +343,7 @@ flash_logger(int fd)
 		}
 	}
 	print_error_msg("Programming failed\n");
-	close(src_fd);
-	close(dst_fd);
+	close_fds(2, src_fd, dst_fd);
 	return -1;
 }
 
@@ -403,28 +396,71 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 	return 0;
 }
 
+void
+manual_serial_number_insert(char *serial_number)
+{
+	do {
+		if (*serial_number) {
+			printf("Serial number must be less "
+				"than 10 characters long\n\n");
+		}
+		printf("Enter serial number: ");
+		scanf("%s", serial_number);
+	} while (strlen(serial_number) > 10);
+}
+
+int
+insert_into_db(char *serial_number)
+{
+	MYSQL *con = mysql_init(NULL);
+	char server[] = DB_SERVER;
+	char user[] = DB_USER;
+	char pass[] = DB_PASS;
+	char database[] = DATABASE;
+	char query[100];
+	int id;
+
+	snprintf(query, sizeof(query),
+		 "Insert into %s (submission_date) \
+		 values (CURTIME())", DB_TABLE);
+
+	if (con == NULL){
+		fprintf(stderr, "%s\n", mysql_error(con));
+		return -1;
+	}
+
+	if (!mysql_real_connect(con, server, user, pass,
+				database, 0, NULL, 0)){
+		fprintf(stderr, "%s\n", mysql_error(con));
+		mysql_close(con);
+		return -1;
+	}
+
+	if (mysql_query(con, query)){
+		fprintf(stderr, "%s\n", mysql_error(con));
+		mysql_close(con);
+		return -1;	
+	}		
+	
+	id = mysql_insert_id(con);
+	snprintf(serial_number, sizeof(serial_number), "%d", id);
+	
+	return 0;	
+}
+
 int 
 factory_write(int fd, char *fct_comp_str, char *apn_cmd,
 	      char *hard_rev, char *prod_num) 
 {	
-	char ser_num[10] = {0};
 	char fct_cmd[100];
+	char ser_num[10] = {0};
 
 	printf("\n---------------------\n");
 
-	// Factory input parameters	
-	do {
-		if (*ser_num) {
-			printf("Serial number must be less"
-			       "than 10 characters long\n");
-		}
-		printf("Enter serial number: ");
-		scanf("%s", ser_num);
-	} while (strlen(ser_num) > 10);
-
+	manual_serial_number_insert(ser_num);
 	sprintf(fct_cmd, "factory -s %s -r %s -p %s -f\n",
 		ser_num, hard_rev, prod_num);
-	
+
 	if (!write_to_logger(fd, fct_cmd) 
 		&& !read_from_logger(fd, fct_comp_str, FLUSH, FACTORY_TIMEOUT) 
 		&& !write_to_logger(fd, apn_cmd) 
@@ -529,10 +565,6 @@ gsm_test(int fd, int i2c_fd, char *apn)
 		print_error_msg("Error while changing gsm baud rate\n");
 		return -1;
 	}
-
-//	printf("Measure VCCGSM - 3.8V\nPress ENTER to continue test ");
-//	getchar();
-//	getchar();
 
 	// Check VCCGSM
 	if (measure_voltage(fd, i2c_fd)) {
@@ -709,10 +741,13 @@ inputs_test(int fd, int i2c_fd)
 }
 
 int 
-soft_ver_check(int fd, char *soft_ver)
+soft_ver_check(int fd)
 {
 	write_to_logger(fd, "uname -a\n");
-	return read_from_logger(fd, SOFT_VER, FLUSH, 0.5);
+	if (read_from_logger(fd, SOFT_VER, FLUSH, 0.5)){
+		printf("\nSoftware version doesn't match, "
+			"must be %s\n", SOFT_VER);
+	}
 }
 
 void 
@@ -738,18 +773,28 @@ print_error_msg(char *err_msg)
 }
 
 void 
-power_off(int fd, int i2c_fd)
+power_off()
 {
-	close(fd);
-	close(i2c_fd);
 	digitalWrite(PWR, LOW);
 	digitalWrite(JMP, LOW);
 	digitalWrite(REED, LOW);
 	digitalWrite(CAP, HIGH);
-	printf("\nWait 30 seconds for cap to discharge\n");
-	sleep(30);
+	printf("\nWait %d seconds for cap to discharge\n", CAP_DISCH_TIME);
+	sleep(CAP_DISCH_TIME);
 	digitalWrite(CAP, LOW);
 }
+
+void
+close_fds(int fd_count, ...){
+	va_list ap;
+
+	va_start(ap, fd_count);
+	for (int i = 0; i < fd_count; i++){
+		close(va_arg(ap, int));
+	}
+	va_end(ap);
+}
+
 
 double 
 calculate_time(time_t *start)
@@ -781,4 +826,18 @@ reset_nucleo(int sleeptime)
 	do {
 		;
 	} while (open(NUCLEO_PATH, O_RDONLY) < 0);
+}
+
+void 
+end_test(time_t *start)
+{	
+	double test_time = calculate_time(start);
+	int seconds = (int) test_time % 60;
+	int minutes = (test_time - seconds) / 60;
+
+	printf("\n---------------------\n");
+	printf("\033[1;32m");
+	printf("Test ended successfully!\n");
+	printf("\033[0m");
+	printf("Total test time = %d.%.2dm\n", minutes, seconds);
 }
