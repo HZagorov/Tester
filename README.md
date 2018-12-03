@@ -2,7 +2,8 @@
 Automatic tester for DL-MINI.
 
 ## Prerequisites
-In order to compile the tester.c program you need the wiringPi C library used in all Raspberry Pi.
+In order to compile the tester.c program you need the wiringPi C library used in all Raspberry Pi,
+as well as the libmariadbclient library.
 To build the Nucleo program first go to the repository
 ```
 https://os.mbed.com/users/HZagorov/code/Nucleo_i2c_raspberry/

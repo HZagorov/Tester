@@ -29,12 +29,13 @@ main(int argc, char *argv[])
 	char *prod_num = DEF_PROD_NUM;
 	int fd, i2c_fd, opt;
 	time_t start;
+	int (*ser_num_func) (char *) = serial_number_insert; 	
 	
 	char fct_str[] = "written successfully";	
 	char apn_cmd[200];
 
 	// Check for input parameters
-	while ((opt = getopt(argc, argv, "a:h:p:")) != -1) {
+	while ((opt = getopt(argc, argv, "a:h:p:s")) != -1) {
 		switch (opt){
 		case 'a':
 			apn = optarg;
@@ -45,11 +46,16 @@ main(int argc, char *argv[])
 		case 'p':
 			prod_num = optarg;
 			break;
+		case 's':
+			ser_num_func = manual_serial_number_insert;
+			break;	
 		default:
 			fprintf(stderr, "Usage: %s [-a apn] "
 				"[-h hardware revision] "
-				"[-p product number]\n", argv[0]);
-			return 0;
+				"[-p product number] -s\n"
+				"Where: -s: Manually "
+				"insert serial number\n", argv[0]);
+			return -1;
 		}
 	}
 
@@ -58,11 +64,18 @@ main(int argc, char *argv[])
 		 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
 	power_devices();
-	if(setup_devices(&fd, &i2c_fd)){
-		power_off();
+	if (setup_devices(&fd, &i2c_fd)){
+		power_off(0);
+		return -1;
 	}
 	setup_termios(fd); // Set options for serial port
+	if (check_serial_number(fd)){
+		close_fds(2, fd, i2c_fd);
+		power_off(0);
+		return -1;
+	}
 	begin_test(&start);	
+
 
 	// Test conditions
 	if (flash_logger(fd)
@@ -71,23 +84,21 @@ main(int argc, char *argv[])
 		|| led_test(fd) 
 		|| gsm_test(fd, i2c_fd, apn) 
 		|| inputs_test(fd, i2c_fd) 
-		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num)) {
+		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num,
+				ser_num_func )) {
 	
 		close_fds(2, fd, i2c_fd);
-		power_off();
+		power_off(CAP_DISCH_TIME);
 		print_error_msg("Test failed\n");
 		return -1;
 	}
-	
-	
+		
 	soft_ver_check(fd);
 	close_fds(2, fd, i2c_fd);
-	power_off();
-	end_test(&start);
-	
+	power_off(CAP_DISCH_TIME);
+	end_test(&start);	
 	return 0;
 }
-
 
 void 
 power_devices()
@@ -97,7 +108,7 @@ power_devices()
 	snprintf(fail_path, sizeof(fail_path), "%s/FAIL.TXT", NUCLEO_PATH);
 
 	wiringPiSetupGpio();
-	pinMode(PWR, OUTPUT);	
+	pinMode(PWR, OUTPUT);
 	digitalWrite(PWR, HIGH);
 	pinMode(JMP, OUTPUT);
 	pinMode(REED, OUTPUT);
@@ -117,7 +128,6 @@ power_devices()
 	if (get_available_space(NUCLEO_PATH) < IMAGE_BLOCKS){
 		reset_nucleo(1);
 	}
-
 }
 
 int 
@@ -170,6 +180,38 @@ setup_termios(int fd)
 	tcsetattr (fd,TCSANOW, &options);	
 }
 
+int
+check_serial_number(int fd)
+{
+	char serial_cmd[] = "cat /rsvd/factory.txt\n";
+	char serial_line[20] = "serial";
+	char serial_number[10];
+	int c, j = 0;
+
+	if (!read_from_logger(fd, BOOT_STR, BOOT_TIMEOUT, NONE)
+	  	&& !write_to_logger(fd, serial_cmd)
+		&& !read_from_logger(fd, serial_line, 1, STORE)) {
+
+		for (int i = 0; i < strlen(serial_line); i++) {
+			if (isdigit(serial_line[i])) {
+				serial_number[j++] = serial_line[i];
+			}
+		}
+		serial_number[j] = '\0';
+
+		if (serial_number[0] != '\0'){
+			printf("Device has a serial number - %s\n",
+				serial_number);
+			printf("Begin test or quit? [y/n] ");
+			c = getchar();
+			if (c != 'y' && c != 'Y') {
+				return -1;	
+			}
+		}
+	}
+	return 0;
+}	
+
 void 
 begin_test(time_t *start)
 {
@@ -196,7 +238,7 @@ write_to_logger (int fd, char *str)
 }
 
 int
-read_from_logger (int fd, char *comp_str, int flush, float timeout)
+read_from_logger (int fd, char *comp_str, float timeout, int flags)
 {
 	int retval;
 	int rx_length;
@@ -220,15 +262,15 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 		else if (FD_ISSET(fd, &rfds)) {
 			rx_length = read(fd, buf, 255);
 		  	buf[rx_length] = '\0';
-			if (!flush) { 
+			if (flags & PRINT) { 
 				printf("%s", buf);
 			}
 			if (comp_str != NULL) {	
 				char *pch = strstr(buf,comp_str);
+				//printf("comp_str is %s\n", comp_str);
 				if (pch) {
-					if (pch = strstr(comp_str,
-							 "ERROR UMTS:")) {	
-						strcpy(comp_str,buf);
+					if (flags & STORE){
+						strcpy(comp_str, buf);
 					}
 					return 0;
 				}
@@ -245,7 +287,7 @@ read_from_logger (int fd, char *comp_str, int flush, float timeout)
 void 
 flush(int fd)
 {
-	read_from_logger(fd, NULL, FLUSH, FLUSH_TIMEOUT );
+	read_from_logger(fd, NULL, FLUSH_TIMEOUT, NONE);
 }
 
 void 
@@ -271,7 +313,6 @@ flash_check(int fd)
 	int image_size;
 	char md5c_cmd[100];
 	char md5sum[MD5SUM_HASH_SIZE];
-	char boot_str[] = "NuttShell";
 	struct stat image_stat;
 	
 	flush(fd);
@@ -283,12 +324,12 @@ flash_check(int fd)
 	
 	calculate_md5sum(md5sum, sizeof(md5sum));
 	
-	if (read_from_logger(fd, boot_str, FLUSH, BOOT_CHECK_TIMEOUT)) {
+	if (read_from_logger(fd, BOOT_STR, FLASH_BOOT_TIMEOUT, NONE)) {
 		reset_logger();
 	}	
 
 	if (!write_to_logger(fd, md5c_cmd)
-		&& !read_from_logger(fd, md5sum, FLUSH, MD5SUM_TIMEOUT )) {
+		&& !read_from_logger(fd, md5sum, MD5SUM_TIMEOUT, NONE )) {
 
 		print_ok();
 		return 0;
@@ -382,12 +423,10 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		   	      "-p DL-MINI-BAT36-D2-3G -f\n";
     
 	if (write_to_logger(fd, mock_fct_cmd) 
-		|| read_from_logger(fd, fct_comp_str, FLUSH, 
-				    FACTORY_TIMEOUT) 
+		|| read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) 
 		|| write_to_logger(fd, apn_cmd) 
 		|| write_to_logger(fd, "factory -c\n") 
-		|| read_from_logger(fd, fct_comp_str, FLUSH,
-				    FACTORY_TIMEOUT)) {
+		|| read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)) {
 
 		//printf("Probably DUT is in sleep mode\n");
 		print_error_msg("Mock factory config write failed\n");
@@ -396,33 +435,13 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 	return 0;
 }
 
-void
-manual_serial_number_insert(char *serial_number)
-{
-	do {
-		if (*serial_number) {
-			printf("Serial number must be less "
-				"than 10 characters long\n\n");
-		}
-		printf("Enter serial number: ");
-		scanf("%s", serial_number);
-	} while (strlen(serial_number) > 10);
-}
-
 int
-insert_into_db(char *serial_number)
+setup_mysql(MYSQL *con)
 {
-	MYSQL *con = mysql_init(NULL);
 	char server[] = DB_SERVER;
 	char user[] = DB_USER;
 	char pass[] = DB_PASS;
 	char database[] = DATABASE;
-	char query[100];
-	int id;
-
-	snprintf(query, sizeof(query),
-		 "Insert into %s (submission_date) \
-		 values (CURTIME())", DB_TABLE);
 
 	if (con == NULL){
 		fprintf(stderr, "%s\n", mysql_error(con));
@@ -435,6 +454,50 @@ insert_into_db(char *serial_number)
 		mysql_close(con);
 		return -1;
 	}
+	return 0;
+}
+
+int
+manual_serial_number_insert(char *serial_number)
+{
+	MYSQL *con = mysql_init(NULL);
+	char query[100];
+
+	setup_mysql(con);
+	do {
+		if (*serial_number) {
+			printf("Serial number must be less "
+			       "than 10 characters long\n\n");
+		}
+		printf("Enter serial number: ");
+		scanf("%s", serial_number);
+	} while (strlen(serial_number) > 10);
+	
+	snprintf(query, sizeof(query),
+		 "Insert into %s values (%s, CURTIME())",
+		 DB_TABLE, serial_number);
+
+	if (mysql_query(con, query)){
+		fprintf(stderr, "%s\n", mysql_error(con));
+		mysql_close(con);
+		return -1;	
+	}		
+	
+	mysql_close(con);
+	return 0;
+}
+
+int
+serial_number_insert(char *serial_number)
+{
+	MYSQL *con = mysql_init(NULL);
+	char query[100];
+	int id;
+	
+	setup_mysql(con);
+	snprintf(query, sizeof(query),
+		 "Insert into %s (submission_date) \
+		 values (CURTIME())", DB_TABLE);
 
 	if (mysql_query(con, query)){
 		fprintf(stderr, "%s\n", mysql_error(con));
@@ -444,29 +507,30 @@ insert_into_db(char *serial_number)
 	
 	id = mysql_insert_id(con);
 	snprintf(serial_number, sizeof(serial_number), "%d", id);
-	
+
+	mysql_close(con);	
 	return 0;	
 }
 
 int 
-factory_write(int fd, char *fct_comp_str, char *apn_cmd,
-	      char *hard_rev, char *prod_num) 
+factory_write(int fd, char *fct_comp_str, char *apn_cmd, char *hard_rev,
+	      char *prod_num, int (*func)(char *)) 
 {	
 	char fct_cmd[100];
 	char ser_num[10] = {0};
 
 	printf("\n---------------------\n");
 
-	manual_serial_number_insert(ser_num);
+	func(ser_num);
 	sprintf(fct_cmd, "factory -s %s -r %s -p %s -f\n",
 		ser_num, hard_rev, prod_num);
 
+	flush(fd);
 	if (!write_to_logger(fd, fct_cmd) 
-		&& !read_from_logger(fd, fct_comp_str, FLUSH, FACTORY_TIMEOUT) 
+		&& !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) 
 		&& !write_to_logger(fd, apn_cmd) 
 		&& !write_to_logger(fd, "factory -c\n") 
-		&& !read_from_logger(fd, fct_comp_str, FLUSH,
-		       		     FACTORY_TIMEOUT)) {
+		&& !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)){
 
 		printf("Factory config successfully written\n");
 		return 0;	
@@ -558,7 +622,7 @@ gsm_test(int fd, int i2c_fd, char *apn)
 	printf("Setting GSM module, please wait 1 minute...\n");
 
 	if (!write_to_logger(fd, bd_cmd)
-		&& !read_from_logger(fd, bd_comp_str, FLUSH, UMTS_TIMEOUT)) {
+		&& !read_from_logger(fd, bd_comp_str, UMTS_TIMEOUT, NONE)) {
 
 		printf("Baud rate changed successfully\n");
 	} else { 
@@ -587,10 +651,11 @@ gsm_test(int fd, int i2c_fd, char *apn)
 	}
 	write(1, test_msg, sizeof(test_msg)); 
 	
-	if (!read_from_logger(fd, error_msg, FLUSH, UMTS_ERROR_TIMEOUT)) {
+	if (!read_from_logger(fd, error_msg, UMTS_ERROR_TIMEOUT, STORE)) {
 		err = 1 - err;
+		
 	}
-	else if (!read_from_logger(fd, ping_comp_str, FLUSH, PING_TIMEOUT)) {
+	else if (!read_from_logger(fd, ping_comp_str, PING_TIMEOUT, NONE)) {
 		print_ok();
 		return 0;
 	}	
@@ -647,11 +712,14 @@ inputs_config(int fd)
 	
 	for ( int i = 0; i < sizeof(cmd) / sizeof(cmd[0]) ; i++ ) {
 		sprintf (line, "printf \"%s\" >> /mnt/conf.cfg\n", cmd[i]);	
-	       	if (write_to_logger(fd, line) || write_to_logger(fd, new_line)) {
+	       	if (write_to_logger(fd, line) 
+			|| write_to_logger(fd, new_line)) {
+
 			print_error_msg("Inputs config write failed\n");
 			return -1;
 		}
-		read_from_logger(fd, NULL, FLUSH, INPUTS_CONF_SLEEP);//Wait 0.5s
+		//Wait 0.5s
+		read_from_logger(fd, NULL, INPUTS_CONF_SLEEP, NONE);
 	}
 	printf("Inputs config written\n");
 	return 0;
@@ -668,12 +736,12 @@ reed_test(int fd)
 	printf("\n---------------------\n");
 	printf("Wait for DUT to enter sleep mode...\n");
 
-	if (!read_from_logger(fd, alarm_str, FLUSH, SLEEP_TIMEOUT)) {
+	if (!read_from_logger(fd, alarm_str, SLEEP_TIMEOUT, NONE)) {
 		printf("Turning magnet on\n");	
 		write(1, test_msg, sizeof(test_msg));
 		digitalWrite(REED, HIGH);
 		
-		if (!read_from_logger(fd, reed_str, FLUSH, EM_TIMEOUT)) {
+		if (!read_from_logger(fd, reed_str, EM_TIMEOUT, NONE)) {
 			digitalWrite(REED, LOW);
 			print_ok();
 			return write_to_logger(fd, "reset\n");
@@ -682,8 +750,8 @@ reed_test(int fd)
 			print_fail();
 
 			printf("Activate reed ampule by hand\n");
-			if (!read_from_logger(fd, reed_str, FLUSH,
-					      REED_CHECK_TIMEOUT)) {
+			if (!read_from_logger(fd, reed_str,
+					      REED_CHECK_TIMEOUT, NONE)) {
 				write(1, test_msg, sizeof(test_msg));
 				print_ok();
 				return	write_to_logger(fd, "reset\n");
@@ -711,14 +779,16 @@ generate_pulses(int fd, int i2c_fd)
 
 	write(1, test_msg, sizeof(test_msg));
 
-	if (!read_from_logger(fd, alarm_str, FLUSH, ALARM_TIMEOUT)) {
+	if (!read_from_logger(fd, alarm_str, ALARM_TIMEOUT, NONE)) {
 		write(i2c_fd, buf, strlen(buf));
 		sleep(1); // Wait for Nucleo to generate pulses	
 
 		if (!write_to_logger(fd, "cat /dev/lptim1\n") 
-			&& !read_from_logger(fd, "96", FLUSH, PULSE_TIMEOUT) 
+			&& !read_from_logger(fd, LPTIM1_PULSES, 
+					     PULSE_TIMEOUT, NONE) 
 			&& !write_to_logger(fd, "cat /dev/lptim2\n") 
-			&& !read_from_logger(fd, "95", FLUSH, PULSE_TIMEOUT)) {
+			&& !read_from_logger(fd, LPTIM2_PULSES,
+			       		     PULSE_TIMEOUT, NONE)) {
 
 			print_ok();
 			return 0;				
@@ -744,9 +814,9 @@ int
 soft_ver_check(int fd)
 {
 	write_to_logger(fd, "uname -a\n");
-	if (read_from_logger(fd, SOFT_VER, FLUSH, 0.5)){
+	if (read_from_logger(fd, SOFT_VER, 0.5, NONE)){
 		printf("\nSoftware version doesn't match, "
-			"must be %s\n", SOFT_VER);
+		       "must be %s\n", SOFT_VER);
 	}
 }
 
@@ -773,14 +843,16 @@ print_error_msg(char *err_msg)
 }
 
 void 
-power_off()
+power_off(int disch_time)
 {
 	digitalWrite(PWR, LOW);
 	digitalWrite(JMP, LOW);
 	digitalWrite(REED, LOW);
-	digitalWrite(CAP, HIGH);
-	printf("\nWait %d seconds for cap to discharge\n", CAP_DISCH_TIME);
-	sleep(CAP_DISCH_TIME);
+	if (disch_time > 0){
+		digitalWrite(CAP, HIGH);
+		printf("\nWait %d seconds for cap to discharge\n", disch_time);
+		sleep(disch_time);
+	}
 	digitalWrite(CAP, LOW);
 }
 
