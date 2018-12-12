@@ -6,16 +6,27 @@
 #define JMP 	24	//console jumper
 #define PWR 	27	//DUT power
 
+#define FAILURE		0
+#define SUCCESS		1
 #define BOOT_STR	"NuttShell"
 #define DEF_APN		"mtm.tag.com"
 #define CAP_DISCH_TIME	30
+#define NO_DISCH	0
 #define LPTIM1_PULSES	"96"
 #define LPTIM2_PULSES	"95"
 
+//Test flags
+#define T_FLASH		0x01
+#define T_LED		0x02
+#define T_MODULE	0x04
+#define T_INPUTS	0x08
+#define T_REED		0x10
+#define T_FACTORY	0x20
+
 //Read flags
-#define NONE		0x0
-#define PRINT 		0x1	//print what's read
-#define STORE 		0x2	//store the matched string from read()
+#define NONE		0x00
+#define PRINT 		0x01	//print what's read
+#define STORE 		0x02	//store the matched string from read()
 
 //Programming macros
 #define SOFT_VER	"0.4.27"
@@ -77,7 +88,7 @@ int read_from_logger(int fd, char *comp_str, float timeout, int flags);
 void flush(int fd);
 int flash_check(int fd);
 int flash_logger(int fd);
-int fs_write(int fd);
+int fs_config(int fd);
 int mock_factory_write(int fd, char *fct_comp_str, char *apn);
 int setup_mysql(MYSQL *con);
 int manual_serial_number_insert(char *serial_number);
@@ -86,10 +97,11 @@ int factory_write(int fd, char *fct_comp_str, char *apn,
 		  char *hard_rev, char *prod_num, int (*func)(char *));
 int led_test(int fd);
 int measure_voltage(int fd, int i2c_fd);
-int gsm_test(int fd, int i2c_fd, char *apn);
+int module_test(int fd, int i2c_fd, char *apn);
 int inputs_config(int fd);
 int generate_pulses(int fd, int i2c_fd);
 int inputs_test(int fd, int i2c_fd);
+int reed_test(int fd);
 int soft_ver_check(int fd);
 void print_ok();
 void print_fail();
@@ -99,4 +111,4 @@ void power_off(int disch_time);
 double calculate_time(time_t *start);
 void reset_logger();
 void reset_nucleo(int sleeptime);
-void end_test(time_t *start);
+void end_test(int fd, int i2c_fd, int cap_time, int test_result, time_t *start);

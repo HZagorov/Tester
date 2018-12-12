@@ -20,14 +20,13 @@
 
 #include "tester.h"
 
-
 int 
 main(int argc, char *argv[])
 {
 	char *apn = DEF_APN;
 	char *hard_rev = DEF_HARD_REV;
 	char *prod_num = DEF_PROD_NUM;
-	int fd, i2c_fd, opt;
+	int fd, i2c_fd, opt, t_flags = 0, fail_flag = 1;
 	time_t start;
 	int (*ser_num_func) (char *) = serial_number_insert; 	
 	
@@ -35,7 +34,7 @@ main(int argc, char *argv[])
 	char apn_cmd[200];
 
 	// Check for input parameters
-	while ((opt = getopt(argc, argv, "a:h:p:s")) != -1) {
+	while ((opt = getopt(argc, argv, "a:h:p:smiflrce")) != -1) {
 		switch (opt){
 		case 'a':
 			apn = optarg;
@@ -48,15 +47,46 @@ main(int argc, char *argv[])
 			break;
 		case 's':
 			ser_num_func = manual_serial_number_insert;
-			break;	
+			break;
+		case 'm':
+			t_flags |= T_MODULE;
+			break;
+		case 'i':
+			t_flags |= T_INPUTS;
+			break;
+		case 'f':
+			t_flags |= T_FLASH;
+			break;
+		case 'l':
+			t_flags |= T_LED;
+			break;
+		case 'r':
+			t_flags |= T_REED;
+			break;
+		case 'c':
+			t_flags |= T_FACTORY;
+			break;
+		case 'e':
+			fail_flag = 0;
+			break;
 		default:
-			fprintf(stderr, "Usage: %s [-a apn] "
-				"[-h hardware revision] "
-				"[-p product number] -s\n"
-				"Where: -s: Manually "
-				"insert serial number\n", argv[0]);
+			fprintf(stderr, "Usage:\t%s [-a apn] "
+				"[-h hardware revision] [-p product number]\n"
+				"\t-s -m -i -f -l -r -c\n"
+				"Where:\t-s: Manually insert serial number\n"
+				"\t-f: Flash DUT\n\t-l: Test LED\n\t"
+				"-m: Test communication module\n\t"
+				"-i: Test lptim inputs\n\t" 
+				"-r: Test reed ampule\n\t"
+				"-c: Write serial number\n\t"
+			       	"-e: Execute test without interruption "
+			        "in case of failure\n", argv[0]);
 			return -1;
 		}
+	}
+
+	if (t_flags == 0) {
+		t_flags = 255;
 	}
 
 	snprintf(apn_cmd, sizeof(apn_cmd), 
@@ -64,39 +94,63 @@ main(int argc, char *argv[])
 		 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
 
 	power_devices();
-	if (setup_devices(&fd, &i2c_fd)){
+	if (setup_devices(&fd, &i2c_fd)) {
 		power_off(0);
 		return -1;
 	}
 	setup_termios(fd); // Set options for serial port
-	if (check_serial_number(fd)){
+	if (check_serial_number(fd)) {
 		close_fds(2, fd, i2c_fd);
 		power_off(0);
 		return -1;
 	}
 	begin_test(&start);	
 
-
 	// Test conditions
-	if (flash_logger(fd)
-		|| fs_write(fd) // File system config
-		|| mock_factory_write(fd, fct_str, apn_cmd) 
-		|| led_test(fd) 
-		|| gsm_test(fd, i2c_fd, apn) 
-		|| inputs_test(fd, i2c_fd) 
-		|| factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num,
-				ser_num_func )) {
+	if ((t_flags & T_FLASH && (flash_logger(fd)  
+		|| fs_config(fd) // File system config
+		|| mock_factory_write(fd, fct_str, apn_cmd) ))) {
+		
+		if (fail_flag) {
+			end_test(fd, i2c_fd, NO_DISCH, FAILURE, &start);
+			return -1;
+		}
+	}
 	
-		close_fds(2, fd, i2c_fd);
-		power_off(CAP_DISCH_TIME);
-		print_error_msg("Test failed\n");
+	if (t_flags & T_LED && led_test(fd)
+		|| (t_flags & T_MODULE && module_test(fd, i2c_fd, apn))) {
+		
+		if (fail_flag) {
+			end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
+			return -1;
+		}	
+	}
+
+	if ((t_flags & T_INPUTS && inputs_test(fd, i2c_fd))) {
+		if (fail_flag) {
+			end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
+			return -1;
+		}	
+	}
+
+	if ((t_flags & T_REED && reed_test(fd))) {
+		if (fail_flag) {
+			end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
+			return -1;
+		}			
+	}
+
+	//Don't execute factory_write when fail_flag or t_flag is unset
+	if (fail_flag && (t_flags & T_FACTORY &&
+	    factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num,
+			  ser_num_func))) {
+			
+		end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
 		return -1;
 	}
 		
 	soft_ver_check(fd);
-	close_fds(2, fd, i2c_fd);
-	power_off(CAP_DISCH_TIME);
-	end_test(&start);	
+	end_test(fd, i2c_fd, CAP_DISCH_TIME, SUCCESS, &start);	
 	return 0;
 }
 
@@ -233,7 +287,7 @@ write_to_logger (int fd, char *str)
 		return 0;
 	} else { 
 		perror("Write failed - ");
-		return - 1;
+		return -1;
 	}
 }
 
@@ -298,7 +352,6 @@ calculate_md5sum(char *md5sum, size_t size)
 	
 	snprintf(md5sum_cmd, sizeof(md5sum_cmd), "md5sum %s", IMAGE_PATH);
 	FILE *p = popen(md5sum_cmd, "r");
-
 	for (i = 0; i < size - 1  && isxdigit(ch = fgetc(p)); i++) {
 		*md5sum++ = ch;
 	}
@@ -389,7 +442,7 @@ flash_logger(int fd)
 }
 
 int 
-fs_write(int fd)
+fs_config(int fd)
 {
 	char umount_mnt_cmd[] = "umount /mnt\n";
 	char umount_rsvd_cmd[] = "umount /rsvd\n";
@@ -423,7 +476,7 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		   	      "-p DL-MINI-BAT36-D2-3G -f\n";
     
 	if (write_to_logger(fd, mock_fct_cmd) 
-		|| read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) 
+		|| read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, PRINT) 
 		|| write_to_logger(fd, apn_cmd) 
 		|| write_to_logger(fd, "factory -c\n") 
 		|| read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)) {
@@ -447,9 +500,8 @@ setup_mysql(MYSQL *con)
 		fprintf(stderr, "%s\n", mysql_error(con));
 		return -1;
 	}
-
 	if (!mysql_real_connect(con, server, user, pass,
-				database, 0, NULL, 0)){
+				database, 0, NULL, 0)) {
 		fprintf(stderr, "%s\n", mysql_error(con));
 		mysql_close(con);
 		return -1;
@@ -597,13 +649,13 @@ measure_voltage(int fd, int i2c_fd)
 }
 
 int
-gsm_test(int fd, int i2c_fd, char *apn)
+module_test(int fd, int i2c_fd, char *apn)
 {	
 	int err = 0;
 	char response;
 	char bd_comp_str[] = "Successfully changed baud rate";
 	char ping_comp_str[] = "Successfully ping host";
-	char test_msg[] = "GSM test -    ";
+	char test_msg[] = "Module test -    ";
 	char error_msg[] = "ERROR UMTS:";
 	char qftpc_cmd[200];
 	char bd_cmd[] = "modem_config -d /dev/ttyS0 -g 1 "
@@ -670,7 +722,7 @@ gsm_test(int fd, int i2c_fd, char *apn)
 		printf("Retest GSM? [y/n] ");
 		scanf(" %c", &response);
 		if (response == 'y' || response == 'Y') {
-			return gsm_test(fd, i2c_fd, apn);
+			return module_test(fd, i2c_fd, apn);
 		}
 	}
 	return -1;
@@ -702,14 +754,12 @@ inputs_config(int fd)
 		"lptim2_log_count enable"
 	};
 
-
 	printf("Setting the digital inputs' config, wait for 6 seconds\n");
 
 	if (write_to_logger (fd, new_line)) {		
 		print_error_msg("Inputs config write failed\n");
 		return -1;
 	}
-	
 	for ( int i = 0; i < sizeof(cmd) / sizeof(cmd[0]) ; i++ ) {
 		sprintf (line, "printf \"%s\" >> /mnt/conf.cfg\n", cmd[i]);	
 	       	if (write_to_logger(fd, line) 
@@ -723,45 +773,6 @@ inputs_config(int fd)
 	}
 	printf("Inputs config written\n");
 	return 0;
-}
-
-int 
-reed_test(int fd) 
-{
-	char test_msg[] = "Reed test -    ";
-	char alarm_str[] ="AT+QPOWD=1";
-	char reed_str[] = "Reed clicked for 3s.";
-	
-	flush(fd);	
-	printf("\n---------------------\n");
-	printf("Wait for DUT to enter sleep mode...\n");
-
-	if (!read_from_logger(fd, alarm_str, SLEEP_TIMEOUT, NONE)) {
-		printf("Turning magnet on\n");	
-		write(1, test_msg, sizeof(test_msg));
-		digitalWrite(REED, HIGH);
-		
-		if (!read_from_logger(fd, reed_str, EM_TIMEOUT, NONE)) {
-			digitalWrite(REED, LOW);
-			print_ok();
-			return write_to_logger(fd, "reset\n");
-		} else { 
-			digitalWrite(REED, LOW);
-			print_fail();
-
-			printf("Activate reed ampule by hand\n");
-			if (!read_from_logger(fd, reed_str,
-					      REED_CHECK_TIMEOUT, NONE)) {
-				write(1, test_msg, sizeof(test_msg));
-				print_ok();
-				return	write_to_logger(fd, "reset\n");
-			}
-		}
-	}  
-	write(1, test_msg, sizeof(test_msg));
-	print_fail();
-	write_to_logger(fd, "reset\n");
-	return -1;	 
 }
 
 int 
@@ -801,13 +812,51 @@ generate_pulses(int fd, int i2c_fd)
 	return -1;			
 }
 
-
 int 
 inputs_test(int fd, int i2c_fd) 
 {
 	printf("\n---------------------\n");
-	return (inputs_config(fd) || generate_pulses(fd, i2c_fd) 
-		|| reed_test(fd));
+	return (inputs_config(fd) || generate_pulses(fd, i2c_fd));
+	//	|| reed_test(fd));
+}
+
+int 
+reed_test(int fd) 
+{
+	char test_msg[] = "Reed test -    ";
+	char alarm_str[] ="AT+QPOWD=1";
+	char reed_str[] = "Reed clicked for 3s.";
+	
+	flush(fd);	
+	printf("\n---------------------\n");
+	printf("Wait for DUT to enter sleep mode...\n");
+
+	if (!read_from_logger(fd, alarm_str, SLEEP_TIMEOUT, NONE)) {
+		printf("Turning magnet on\n");	
+		write(1, test_msg, sizeof(test_msg));
+		digitalWrite(REED, HIGH);
+		
+		if (!read_from_logger(fd, reed_str, EM_TIMEOUT, NONE)) {
+			digitalWrite(REED, LOW);
+			print_ok();
+			return write_to_logger(fd, "reset\n");
+		} else { 
+			digitalWrite(REED, LOW);
+			print_fail();
+
+			printf("Activate reed ampule by hand\n");
+			if (!read_from_logger(fd, reed_str,
+					      REED_CHECK_TIMEOUT, NONE)) {
+				write(1, test_msg, sizeof(test_msg));
+				print_ok();
+				return	write_to_logger(fd, "reset\n");
+			}
+		}
+	}  
+	write(1, test_msg, sizeof(test_msg));
+	print_fail();
+	write_to_logger(fd, "reset\n");
+	return -1;	 
 }
 
 int 
@@ -857,7 +906,8 @@ power_off(int disch_time)
 }
 
 void
-close_fds(int fd_count, ...){
+close_fds(int fd_count, ...)
+{
 	va_list ap;
 
 	va_start(ap, fd_count);
@@ -866,7 +916,6 @@ close_fds(int fd_count, ...){
 	}
 	va_end(ap);
 }
-
 
 double 
 calculate_time(time_t *start)
@@ -885,7 +934,6 @@ reset_logger()
 	sleep(2);
 }
 
-
 void 
 reset_nucleo(int sleeptime)
 {
@@ -900,9 +948,25 @@ reset_nucleo(int sleeptime)
 	} while (open(NUCLEO_PATH, O_RDONLY) < 0);
 }
 
+void
+end_test_fail(int fd, int i2c_fd, int cap_time) 
+{		
+	close_fds(2, fd, i2c_fd);
+	power_off(cap_time);
+	print_error_msg("Test failed\n");
+}
+
 void 
-end_test(time_t *start)
-{	
+end_test(int fd, int i2c_fd, int cap_time, int test_result, time_t *start)
+{
+	close_fds(2, fd, i2c_fd);
+	power_off(cap_time);
+	
+	if (!test_result) {
+		print_error_msg("Test failed\n");
+		return;
+	}
+
 	double test_time = calculate_time(start);
 	int seconds = (int) test_time % 60;
 	int minutes = (test_time - seconds) / 60;
