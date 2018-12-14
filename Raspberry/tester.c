@@ -26,10 +26,13 @@ main(int argc, char *argv[])
 	char *apn = DEF_APN;
 	char *hard_rev = DEF_HARD_REV;
 	char *prod_num = DEF_PROD_NUM;
+	char imsi[50] = {0};
+	char ccid[50] = {0};
+	char module_rev[50] = {0};
 	int fd, i2c_fd, opt, t_flags = 0, fail_flag = 1;
 	time_t start;
-	int (*ser_num_func) (char *) = serial_number_insert; 	
-	
+	int manual_flag = 0;
+
 	char fct_str[] = "written successfully";	
 	char apn_cmd[200];
 
@@ -46,7 +49,7 @@ main(int argc, char *argv[])
 			prod_num = optarg;
 			break;
 		case 's':
-			ser_num_func = manual_serial_number_insert;
+			manual_flag = 1;
 			break;
 		case 'm':
 			t_flags |= T_MODULE;
@@ -108,7 +111,7 @@ main(int argc, char *argv[])
 
 	// Test conditions
 	if ((t_flags & T_FLASH && (flash_logger(fd)  
-		|| fs_config(fd) // File system config
+		|| mount_fs(fd) // File system config
 		|| mock_factory_write(fd, fct_str, apn_cmd) ))) {
 		
 		if (fail_flag) {
@@ -118,7 +121,8 @@ main(int argc, char *argv[])
 	}
 	
 	if (t_flags & T_LED && led_test(fd)
-		|| (t_flags & T_MODULE && module_test(fd, i2c_fd, apn))) {
+		|| (t_flags & T_MODULE && 
+		    module_test(fd, i2c_fd, apn, imsi, ccid, module_rev))) {
 		
 		if (fail_flag) {
 			end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
@@ -142,8 +146,8 @@ main(int argc, char *argv[])
 
 	//Don't execute factory_write when fail_flag or t_flag is unset
 	if (fail_flag && (t_flags & T_FACTORY &&
-	    factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num,
-			  ser_num_func))) {
+	    factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num, imsi,
+			  ccid, module_rev, manual_flag))) {
 			
 		end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
 		return -1;
@@ -160,7 +164,6 @@ power_devices()
 	char fail_path[100];
 
 	snprintf(fail_path, sizeof(fail_path), "%s/FAIL.TXT", NUCLEO_PATH);
-
 	wiringPiSetupGpio();
 	pinMode(PWR, OUTPUT);
 	digitalWrite(PWR, HIGH);
@@ -234,25 +237,32 @@ setup_termios(int fd)
 	tcsetattr (fd,TCSANOW, &options);	
 }
 
+void
+parse_number(char *line, char *number)
+{
+	int i, k;
+		
+	for (i = 0, k = 0; i < strlen(line); i++) {
+		if (isdigit(line[i])) {
+			number[k++] = line[i];
+		}
+	}
+	number[k] = '\0';
+}
+
 int
 check_serial_number(int fd)
 {
 	char serial_cmd[] = "cat /rsvd/factory.txt\n";
 	char serial_line[20] = "serial";
 	char serial_number[10];
-	int c, j = 0;
+	int c;
 
 	if (!read_from_logger(fd, BOOT_STR, BOOT_TIMEOUT, NONE)
 	  	&& !write_to_logger(fd, serial_cmd)
-		&& !read_from_logger(fd, serial_line, 1, STORE)) {
+		&& !read_from_logger(fd, serial_line, DEF_TIMEOUT, STORE)) {
 
-		for (int i = 0; i < strlen(serial_line); i++) {
-			if (isdigit(serial_line[i])) {
-				serial_number[j++] = serial_line[i];
-			}
-		}
-		serial_number[j] = '\0';
-
+		parse_number(serial_line, serial_number);
 		if (serial_number[0] != '\0'){
 			printf("Device has a serial number - %s\n",
 				serial_number);
@@ -265,17 +275,6 @@ check_serial_number(int fd)
 	}
 	return 0;
 }	
-
-void 
-begin_test(time_t *start)
-{
-	printf("=============");
-	printf("\033[1;32m");
-	printf("TEST BEGIN");
-	printf("\033[0m");
-	printf("=============\n\n");
-	time(start);
-}
 
 int 
 write_to_logger (int fd, char *str)
@@ -345,7 +344,18 @@ flush(int fd)
 }
 
 void 
-calculate_md5sum(char *md5sum, size_t size)
+begin_test(time_t *start)
+{
+	printf("=============");
+	printf("\033[1;32m");
+	printf("TEST BEGIN");
+	printf("\033[0m");
+	printf("=============\n\n");
+	time(start);
+}
+
+void 
+get_md5sum(char *md5sum, size_t size)
 {
 	char md5sum_cmd[100];
 	int i, ch;
@@ -375,7 +385,7 @@ flash_check(int fd)
 	snprintf(md5c_cmd, sizeof(md5c_cmd), 
 		 "md5c -f /dev/ifbank1 -e %d\n", image_size);
 	
-	calculate_md5sum(md5sum, sizeof(md5sum));
+	get_md5sum(md5sum, sizeof(md5sum));
 	
 	if (read_from_logger(fd, BOOT_STR, FLASH_BOOT_TIMEOUT, NONE)) {
 		reset_logger();
@@ -442,7 +452,7 @@ flash_logger(int fd)
 }
 
 int 
-fs_config(int fd)
+mount_fs(int fd)
 {
 	char umount_mnt_cmd[] = "umount /mnt\n";
 	char umount_rsvd_cmd[] = "umount /rsvd\n";
@@ -454,13 +464,13 @@ fs_config(int fd)
 	};
 	
 	if (write_to_logger(fd, umount_mnt_cmd)
-		||write_to_logger(fd, umount_rsvd_cmd)){
+		||write_to_logger(fd, umount_rsvd_cmd)) {
 
 		print_error_msg("File system config write failed\n");
 		return -1;
 	}
 	for (int i = 0; i < 4; i++) {
-		if (write_to_logger(fd, fs_cmds[i])){
+		if (write_to_logger(fd, fs_cmds[i])) {
 			print_error_msg("File system config write failed\n");
 			return -1;
 		}
@@ -486,111 +496,6 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 		return -1;
 	}
 	return 0;
-}
-
-int
-setup_mysql(MYSQL *con)
-{
-	char server[] = DB_SERVER;
-	char user[] = DB_USER;
-	char pass[] = DB_PASS;
-	char database[] = DATABASE;
-
-	if (con == NULL){
-		fprintf(stderr, "%s\n", mysql_error(con));
-		return -1;
-	}
-	if (!mysql_real_connect(con, server, user, pass,
-				database, 0, NULL, 0)) {
-		fprintf(stderr, "%s\n", mysql_error(con));
-		mysql_close(con);
-		return -1;
-	}
-	return 0;
-}
-
-int
-manual_serial_number_insert(char *serial_number)
-{
-	MYSQL *con = mysql_init(NULL);
-	char query[100];
-
-	setup_mysql(con);
-	do {
-		if (*serial_number) {
-			printf("Serial number must be less "
-			       "than 10 characters long\n\n");
-		}
-		printf("Enter serial number: ");
-		scanf("%s", serial_number);
-	} while (strlen(serial_number) > 10);
-	
-	snprintf(query, sizeof(query),
-		 "Insert into %s values (%s, CURTIME())",
-		 DB_TABLE, serial_number);
-
-	if (mysql_query(con, query)){
-		fprintf(stderr, "%s\n", mysql_error(con));
-		mysql_close(con);
-		return -1;	
-	}		
-	
-	mysql_close(con);
-	return 0;
-}
-
-int
-serial_number_insert(char *serial_number)
-{
-	MYSQL *con = mysql_init(NULL);
-	char query[100];
-	int id;
-	
-	setup_mysql(con);
-	snprintf(query, sizeof(query),
-		 "Insert into %s (submission_date) \
-		 values (CURTIME())", DB_TABLE);
-
-	if (mysql_query(con, query)){
-		fprintf(stderr, "%s\n", mysql_error(con));
-		mysql_close(con);
-		return -1;	
-	}		
-	
-	id = mysql_insert_id(con);
-	snprintf(serial_number, sizeof(serial_number), "%d", id);
-
-	mysql_close(con);	
-	return 0;	
-}
-
-int 
-factory_write(int fd, char *fct_comp_str, char *apn_cmd, char *hard_rev,
-	      char *prod_num, int (*func)(char *)) 
-{	
-	char fct_cmd[100];
-	char ser_num[10] = {0};
-
-	printf("\n---------------------\n");
-
-	func(ser_num);
-	sprintf(fct_cmd, "factory -s %s -r %s -p %s -f\n",
-		ser_num, hard_rev, prod_num);
-
-	flush(fd);
-	if (!write_to_logger(fd, fct_cmd) 
-		&& !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) 
-		&& !write_to_logger(fd, apn_cmd) 
-		&& !write_to_logger(fd, "factory -c\n") 
-		&& !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)){
-
-		printf("Factory config successfully written\n");
-		return 0;	
-	}
-	else {
-		print_error_msg("Factory config write failed\n");
-		return -1;
-	}
 }
 
 int 
@@ -648,8 +553,41 @@ measure_voltage(int fd, int i2c_fd)
 	}
 }
 
+void
+get_sim_info(int fd, char *imsi, char *ccid, char *module_rev )
+{	
+	char imsi_str[20] = "IMSI";
+	char ccid_str[30] = "CCID:";
+	char rev_str[30] = "Revision";
+	
+	if (write_to_logger(fd, "qftpc -j -e 0 -b 0\n")
+    	    || read_from_logger(fd, imsi_str, QFTPC_TIMEOUT, STORE)
+	    || read_from_logger(fd, ccid_str, QFTPC_TIMEOUT, STORE)) {
+	
+		print_error_msg("Failed reading IMSI and CCID number\n");	
+		
+	} else {
+		parse_number(imsi_str, imsi);
+		parse_number(ccid_str, ccid);
+	}
+	if (write_to_logger(fd, "qftpc -v -e 0 -b 0\n")
+	    || read_from_logger(fd, rev_str, QFTPC_TIMEOUT, STORE)) {
+
+		print_error_msg("Failed reading module revision\n");
+	} else {
+		int i;
+		char *pch = strstr(rev_str, "U");
+		
+		for (i = 0; *pch !='\0' ; i++) {
+			module_rev[i] = *pch++;
+		}
+		module_rev[i] = '\0';
+	}	
+}
+
 int
-module_test(int fd, int i2c_fd, char *apn)
+module_test(int fd, int i2c_fd, char *apn, char *imsi,
+		char *ccid, char *module_rev)
 {	
 	int err = 0;
 	char response;
@@ -668,13 +606,14 @@ module_test(int fd, int i2c_fd, char *apn)
 		ip = mondis_ip;
 	}
 	snprintf(qftpc_cmd, sizeof(qftpc_cmd), 
-		 "qftpc -a %s -e 15 -b 20 -i %s\n", apn, ip);
+		 "qftpc -a %s -e 0 -b 0 -i %s\n", apn, ip);
 
 	printf("\n---------------------\n");
 	printf("Setting GSM module, please wait 1 minute...\n");
 
+	// Boot module and change baud rate
 	if (!write_to_logger(fd, bd_cmd)
-		&& !read_from_logger(fd, bd_comp_str, UMTS_TIMEOUT, NONE)) {
+	    && !read_from_logger(fd, bd_comp_str, UMTS_TIMEOUT, NONE)) {
 
 		printf("Baud rate changed successfully\n");
 	} else { 
@@ -686,23 +625,24 @@ module_test(int fd, int i2c_fd, char *apn)
 	if (measure_voltage(fd, i2c_fd)) {
 		return -1;	
 	}
-
+	
+	get_sim_info(fd, imsi, ccid, module_rev);
+	
 	// AT commands
 	if (write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n")
 		||write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n")) {
 
-		print_error_msg("Error while writing AT commands\n");
+		print_error_msg("Error writing AT commands\n");
 		return -1;
 	}
 
+	//Ping 
 	printf("Pinging host %s ...\n", ip);
-
+	
 	if (write_to_logger(fd, qftpc_cmd)) {	
 		print_error_msg("Error writing qftpc command\n");
-
 	}
-	write(1, test_msg, sizeof(test_msg)); 
-	
+	write(1, test_msg, sizeof(test_msg)); 	
 	if (!read_from_logger(fd, error_msg, UMTS_ERROR_TIMEOUT, STORE)) {
 		err = 1 - err;
 		
@@ -710,19 +650,20 @@ module_test(int fd, int i2c_fd, char *apn)
 	else if (!read_from_logger(fd, ping_comp_str, PING_TIMEOUT, NONE)) {
 		print_ok();
 		return 0;
-	}	
+	}
 
 	write_to_logger(fd, "reset\n");
 	print_fail();
 	flush(fd);
-	
+
 	if (err) {
 		print_error_msg(error_msg);
 	} else {
 		printf("Retest GSM? [y/n] ");
 		scanf(" %c", &response);
 		if (response == 'y' || response == 'Y') {
-			return module_test(fd, i2c_fd, apn);
+			return module_test(fd, i2c_fd, apn, imsi,
+					   ccid, module_rev);
 		}
 	}
 	return -1;
@@ -817,7 +758,6 @@ inputs_test(int fd, int i2c_fd)
 {
 	printf("\n---------------------\n");
 	return (inputs_config(fd) || generate_pulses(fd, i2c_fd));
-	//	|| reed_test(fd));
 }
 
 int 
@@ -857,6 +797,116 @@ reed_test(int fd)
 	print_fail();
 	write_to_logger(fd, "reset\n");
 	return -1;	 
+}
+
+int
+setup_mysql(MYSQL *con)
+{
+	char server[] = DB_SERVER;
+	char user[] = DB_USER;
+	char pass[] = DB_PASS;
+	char database[] = DATABASE;
+
+	if (con == NULL){
+		fprintf(stderr, "%s\n", mysql_error(con));
+		return -1;
+	}
+	if (!mysql_real_connect(con, server, user, pass,
+				database, 0, NULL, 0)) {
+		fprintf(stderr, "%s\n", mysql_error(con));
+		mysql_close(con);
+		return -1;
+	}
+	return 0;
+}
+
+void
+insert_serial_number(char *serial_number)
+{
+	do {
+		if (*serial_number) {
+			printf("Serial number must be less then "
+			       "10 characters long\n\n");
+		}
+		printf("Enter serial number: ");
+		scanf("%s", serial_number);
+	} while (strlen(serial_number) > 10);
+}
+
+int 
+database_insert(char *ser_num, char *hard_rev, char *prod_num,
+	       char *imsi, char *ccid, char *mod_rev)
+{
+	MYSQL *con = mysql_init(NULL);
+	char query[255];
+	unsigned long id;
+
+	setup_mysql(con);
+	//s char pointer i malloc da se izbegne proverkata
+	//za nomera i zaqvkata da e edna?
+	if (*ser_num) {
+		snprintf(query, sizeof(query),
+			 "Insert into %s values('%s', '%s', '%s', "
+			 "'%s', '%s', '%s', CURTIME())", DB_TABLE, 
+			 ser_num, hard_rev, prod_num, imsi, ccid, mod_rev);
+	} else {	
+		snprintf(query, sizeof(query),
+			 "Insert into %s (hard_rev, prod_num, imsi, ccid, "
+			 "mod_rev, submission_date) values("
+			 "'%s', '%s', '%s', '%s', '%s', CURTIME())", DB_TABLE, 
+			 hard_rev, prod_num, imsi, ccid, mod_rev);
+	}	
+
+	if (mysql_query(con, query)){
+		fprintf(stderr, "%s\n", mysql_error(con));
+		mysql_close(con);
+		return -1;	
+	}		
+	
+	id = mysql_insert_id(con);
+	snprintf(ser_num, 11, "%lu", id);
+
+	mysql_close(con);	
+	return 0;	
+}
+
+int 
+factory_write(int fd, char *fct_comp_str, char *apn_cmd, char *hard_rev,
+	      char *prod_num, char *imsi, char *ccid, char *module_rev,
+	      int manual_flag) 
+{	
+	char fct_cmd[100];
+	char ser_num[11] = {0};
+	//char *serial = NULL;
+	printf("\n---------------------\n");
+
+	if (manual_flag){
+		//Allocate memory for ser_num
+		insert_serial_number(ser_num);
+	}
+
+	if (database_insert(ser_num, hard_rev, prod_num, imsi, ccid, module_rev)) {
+		print_error_msg("Database write failed\n");
+		return -1;
+	}
+
+	sprintf(fct_cmd, "factory -s %s -r %s -p %s -f\n",
+		ser_num, hard_rev, prod_num);
+	flush(fd);
+	if (!write_to_logger(fd, fct_cmd) 
+		&& !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) 
+		&& !write_to_logger(fd, apn_cmd) 
+		&& !write_to_logger(fd, "factory -c\n") 
+		&& !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)) {
+
+		printf("Factory config successfully written\n");
+		printf("Inserted serial number is %s\n", ser_num);
+		return 0;	
+	}
+	else {
+		print_error_msg("Factory config write failed\n");
+		return -1;
+	}
 }
 
 int 
@@ -946,14 +996,6 @@ reset_nucleo(int sleeptime)
 	do {
 		;
 	} while (open(NUCLEO_PATH, O_RDONLY) < 0);
-}
-
-void
-end_test_fail(int fd, int i2c_fd, int cap_time) 
-{		
-	close_fds(2, fd, i2c_fd);
-	power_off(cap_time);
-	print_error_msg("Test failed\n");
 }
 
 void 

@@ -31,7 +31,7 @@
 //Programming macros
 #define SOFT_VER	"0.4.27"
 #define IMAGE_PATH	"/home/pi/sourceCodes/test/" \
-			"DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin" 
+			"DL-MINI-BAT36-D2-3G-VB1.0-0.5.0-8-g7d724afd.bin"
 
 //Factory macros
 #define DEF_HARD_REV	"VB1.0"
@@ -60,6 +60,7 @@
 #define IMAGE_BLOCKS 65
 
 //Timeout macros
+#define DEF_TIMEOUT 1
 #define FLUSH_TIMEOUT 1
 #define BOOT_TIMEOUT 2
 #define FLASH_BOOT_TIMEOUT 20
@@ -67,6 +68,7 @@
 #define FACTORY_TIMEOUT 2
 #define UMTS_TIMEOUT 40
 #define UMTS_ERROR_TIMEOUT 30
+#define QFTPC_TIMEOUT 3
 #define PING_TIMEOUT 90
 #define INPUTS_CONF_SLEEP 0.5
 #define SLEEP_TIMEOUT 120
@@ -75,34 +77,40 @@
 #define ALARM_TIMEOUT 2
 #define PULSE_TIMEOUT 0.5
 
-int check_serial_number(int fd);
-
 void power_devices();
-int setup_devices(int *fd, int *i2c_fd);
 int get_available_space(char *path);
+int setup_devices(int *fd, int *i2c_fd);
 void setup_termios(int fd);
+void parse_number(char *line, char *number);
 int check_serial_number(int fd);
-void begin_test(time_t *start);
 int write_to_logger(int fd, char *str);
 int read_from_logger(int fd, char *comp_str, float timeout, int flags);
 void flush(int fd);
+void begin_test(time_t *start);
+
+void get_md5sum(char *md5sum, size_t size);
 int flash_check(int fd);
 int flash_logger(int fd);
-int fs_config(int fd);
+int mount_fs(int fd);
 int mock_factory_write(int fd, char *fct_comp_str, char *apn);
-int setup_mysql(MYSQL *con);
-int manual_serial_number_insert(char *serial_number);
-int serial_number_insert(char *serial_number);
-int factory_write(int fd, char *fct_comp_str, char *apn,
-		  char *hard_rev, char *prod_num, int (*func)(char *));
 int led_test(int fd);
 int measure_voltage(int fd, int i2c_fd);
-int module_test(int fd, int i2c_fd, char *apn);
+void get_sim_info(int fd, char *imsi, char *ccid, char *module_rev);
+int module_test(int fd, int i2c_fd, char *apn, char *imsi,
+		char *ccid, char *module_rev);
 int inputs_config(int fd);
 int generate_pulses(int fd, int i2c_fd);
 int inputs_test(int fd, int i2c_fd);
 int reed_test(int fd);
+int setup_mysql(MYSQL *con);
+void insert_serial_number(char *serial_number);
+int database_insert(char *ser_num, char *hard_rev, char *prod_num,
+		   char *imsi, char *ccid, char *mod_rev);
+int factory_write(int fd, char *fct_comp_str, char *apn, char *hard_rev,
+		  char *prod_num, char *imsi, char *ccid, char *module_rev,
+		  int manual_flag);
 int soft_ver_check(int fd);
+
 void print_ok();
 void print_fail();
 void print_error_msg(char *err_msg);
