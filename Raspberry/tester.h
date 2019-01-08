@@ -14,6 +14,7 @@
 #define NO_DISCH	0
 #define LPTIM1_PULSES	"96"
 #define LPTIM2_PULSES	"95"
+#define LOG_PATH	"/home/pi/sourceCodes/tester/Logs/log.txt"
 
 //Test flags
 #define T_FLASH		0x01
@@ -27,29 +28,31 @@
 #define NONE		0x00
 #define PRINT 		0x01	//print what's read
 #define STORE 		0x02	//store the matched string from read()
+#define CLOSE		0x04	//close log file pointer
 
+//Module flags
+#define GSM		0x01
+#define NBIOT		0x02
 //Programming macros
-#define SOFT_VER	"0.4.27"
-#define IMAGE_PATH	"/home/pi/sourceCodes/test/" \
-			"DL-MINI-BAT36-D2-3G-VB1.0-0.5.0-8-g7d724afd.bin"
-
+#define IMAGE_PATH	"/home/pi/sourceCodes/tester/Images/" \
+			"DL-MINI-BAT36-D2-NB-VB1.0-0.5.0-15-g50983ce8.bin"
+			//"DL-MINI-BAT36-D2-3G-VB1.0-0.5.0.1.bin"
 //Factory macros
 #define DEF_HARD_REV	"VB1.0"
-#define DEF_PROD_NUM	"DL-MINI-BAT36-D2-3G"
+#define DEF_PROD_NUM	"DL-MINI-BAT36-D2-NB"
 
 //Database macros
-#define DB_SERVER	"localhost"
-#define DB_USER		"raspberry"
-#define DB_PASS		"smartcom"
-#define DATABASE	"tester"
-#define DB_TABLE	"test"
+#define DB_SERVER	"193.178.153.55"
+#define DB_USER		"tester"
+#define DB_PASS		"a7b221d165cb780e5e8fa804ce29dfc5"
+#define DATABASE	"datalogger"
+#define DB_TABLE	"tester"
 
 //Device macros
 #define NUCLEO_PATH	"/media/pi/NODE_L476RG"
 #define UART_PORT	"/dev/ttyS0"
 #define I2C_PORT	"/dev/i2c-1"
 #define I2C_ADDRESS	0x50
-
 
 //Flush macros
 #define DONT_FLUSH 0
@@ -68,10 +71,12 @@
 #define FACTORY_TIMEOUT 2
 #define UMTS_TIMEOUT 40
 #define UMTS_ERROR_TIMEOUT 30
-#define QFTPC_TIMEOUT 3
 #define PING_TIMEOUT 90
+#define QFTPC_TIMEOUT 3
+#define NBIOT_TIMEOUT 20
+#define AUTOCON_TIMEOUT 1
 #define INPUTS_CONF_SLEEP 0.5
-#define SLEEP_TIMEOUT 120
+#define SLEEP_TIMEOUT 180 //120
 #define EM_TIMEOUT 15	//electromagnet timeout
 #define REED_CHECK_TIMEOUT 20 
 #define ALARM_TIMEOUT 2
@@ -95,8 +100,10 @@ int mount_fs(int fd);
 int mock_factory_write(int fd, char *fct_comp_str, char *apn);
 int led_test(int fd);
 int measure_voltage(int fd, int i2c_fd);
-void get_sim_info(int fd, char *imsi, char *ccid, char *module_rev);
-int module_test(int fd, int i2c_fd, char *apn, char *imsi,
+void get_sim_info(int fd, char *imsi, char *ccid, char *module_rev, int module);
+int gsm_test(int fd, int i2c_fd, char *apn, char *imsi,
+	     char *ccid, char *module_rev);
+int nbiot_test(int fd, int i2c_fd, char *apn, char *imsi,
 		char *ccid, char *module_rev);
 int inputs_config(int fd);
 int generate_pulses(int fd, int i2c_fd);
@@ -105,11 +112,11 @@ int reed_test(int fd);
 int setup_mysql(MYSQL *con);
 void insert_serial_number(char *serial_number);
 int database_insert(char *ser_num, char *hard_rev, char *prod_num,
-		   char *imsi, char *ccid, char *mod_rev);
+		    char *soft_ver, char *imsi, char *ccid, char *mod_rev);
 int factory_write(int fd, char *fct_comp_str, char *apn, char *hard_rev,
 		  char *prod_num, char *imsi, char *ccid, char *module_rev,
 		  int manual_flag);
-int soft_ver_check(int fd);
+int soft_ver_check(int fd, char *soft_ver);
 
 void print_ok();
 void print_fail();
