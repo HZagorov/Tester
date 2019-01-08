@@ -25,8 +25,11 @@ To run the tester program write
 ```
 tester 
 ```
-Without any options the program will test every module and will exit if any failure has occure
-
+Without any options the program will test every module and will exit if any failure has occured.
+The default testing program is for GSM module. If the device is NB-IoT use the -n option.
+```
+tester -n
+```
 
 For faultless test without interrupting or stopping use the -e option
 ```
@@ -41,11 +44,11 @@ For separate module testing use the following options
 -m Test communication module
 -i Test lptim inputs
 -r Test reed ampule
--c Write serial number and module parameters to database
+-d Write serial number and module parameters to database
 ```
 
 Note that when in faultless mode the database insertion is omitted.
-For example if you want to flash the DUT and insert serial number and module parameters to database:
+For example if you want to flash the DUT, test the communication module, manually write serial number and insert module parameters to database:
 ```
-tester -f -c  
+tester -f -m -d -s 
 ```
