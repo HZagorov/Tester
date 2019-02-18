@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+#include <sys/mman.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -20,35 +22,40 @@
 
 #include "tester.h"
 
+
 int 
 main(int argc, char *argv[])
 {
-	char *apn = DEF_APN;
-	char *hard_rev = DEF_HARD_REV;
-	char *prod_num = DEF_PROD_NUM;
-	char imsi[50] = {0};
-	char ccid[50] = {0};
-	char module_rev[50] = {0};
+	struct logger logger;
 	char apn_cmd[200] = {0};
 	char fct_str[] = "written successfully";	
 	int fd, i2c_fd, opt, t_flags = 0, fail_flag = 1;
 	time_t start;
 	int manual_flag = 0;
-	int (*module_test) (int fd, int i2c_fd, char *apn, char *imsi,
-			    char *ccid, char *module_rev);
+	int (*module_test) (int fd, int i2c_fd, struct logger *logger);
 
+	// Asign default values and clear variables without such in case of
+	// empty column database insertion
+	logger.apn = DEF_APN;
+	logger.hard_rev = DEF_HARD_REV;
+	logger.prod_num = DEF_PROD_NUM;
+	logger.imsi[0] = '\0';
+	logger.ccid[0] = '\0';
+	logger.module_rev[0] ='\0';
+	logger.module = GSM;
 	module_test = gsm_test;
+	
 	// Check for input parameters
 	while ((opt = getopt(argc, argv, "a:h:p:smiflrdenc:")) != -1) {
 		switch (opt) {
 		case 'a':
-			apn = optarg;
+			logger.apn = optarg;
 			break;
 		case 'h':
-			hard_rev = optarg;
+			logger.hard_rev = optarg;
 			break;	
 		case 'p':
-			prod_num = optarg;
+			logger.prod_num = optarg;
 			break;
 		case 's':
 			manual_flag = 1;
@@ -75,7 +82,8 @@ main(int argc, char *argv[])
 			fail_flag = 0;
 			break;
 		case 'n':
-			apn = "iot-test";
+			logger.apn = "iot-test";
+			logger.module = NBIOT;
 			module_test = nbiot_test;
 			break;
 		case 'c':
@@ -112,7 +120,7 @@ main(int argc, char *argv[])
 	if (module_test == gsm_test) {
 		snprintf(apn_cmd, sizeof(apn_cmd), 
 			 "printf \"umts_apn %s\" >> /rsvd/default.cfg\n"
-			 "printf \"\\n\" >> rsvd/default.cfg\n", apn);
+			 "printf \"\\n\" >> rsvd/default.cfg\n", logger.apn);
 	}
 
 	power_devices();
@@ -127,22 +135,21 @@ main(int argc, char *argv[])
 		power_off(0);
 		return -1;
 	}
+
 	begin_test(&start);	
 
 	// Test conditions
-	if ((t_flags & T_FLASH && (flash_logger(fd)  
-		|| mount_fs(fd) // File system mount
-		|| mock_factory_write(fd, fct_str, apn_cmd) ))) {
+	if ((t_flags & T_FLASH && (flash_logger(fd) ||  
+	     mount_fs(fd) || 	// File system mount 
+	     mock_factory_write(fd, fct_str, apn_cmd) ))) {
 		
 		if (fail_flag) {
 			end_test(fd, i2c_fd, NO_DISCH, FAILURE, &start);
 			return -1;
 		}
 	}
-	
-	if (t_flags & T_LED && led_test(fd)
-		|| (t_flags & T_MODULE && 
-		    module_test(fd, i2c_fd, apn, imsi, ccid, module_rev))) {
+	if (t_flags & T_LED && led_test(fd) ||
+	   (t_flags & T_MODULE && module_test(fd, i2c_fd, &logger ))) {
 		
 		if (fail_flag) {
 			end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
@@ -154,32 +161,32 @@ main(int argc, char *argv[])
 		if (fail_flag) {
 			end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
 			return -1;
-		}	
+		}
 	}
 
 	if ((t_flags & T_REED)) {
 		if ((t_flags & T_INPUTS) == 0){
 			write_to_logger(fd, "alarm -f\n");
 		}
-		if (reed_test(fd)) {
+		if (reed_test(fd, logger.module)) {
 			if (fail_flag) {
 				end_test(fd, i2c_fd, CAP_DISCH_TIME,
 					 FAILURE, &start);
 				return -1;
-			}	
-		}		
+			}
+		}
 	}
 
 	//Don't execute factory_write in case fail_flag or t_flag is unset
 	if (fail_flag && (t_flags & T_FACTORY &&
-	    factory_write(fd, fct_str, apn_cmd, hard_rev, prod_num,
-			  imsi, ccid, module_rev, manual_flag))) {
+	    factory_write(fd, fct_str, apn_cmd, &logger,
+			   manual_flag))) {
 			
 		end_test(fd, i2c_fd, CAP_DISCH_TIME, FAILURE, &start);
 		return -1;
 	}
 		
-	end_test(fd, i2c_fd, CAP_DISCH_TIME, SUCCESS, &start);	
+	end_test(fd, i2c_fd, CAP_DISCH_TIME, SUCCESS, &start);
 	return 0;
 }
 
@@ -232,17 +239,22 @@ setup_devices(int *fd, int *i2c_fd)
 
 	// Connect to Nucleo via I2C	
 	if ((*i2c_fd = open(I2C_PORT, O_RDWR)) < 0) {
-		printf("Failed to open the I2C bus\n");
+		perror("Unable to open the I2C bus");
 		close(*fd);
 		return -1;
 	}
 
 	// Set Nucleo I2C address
 	if (ioctl(*i2c_fd, I2C_SLAVE, I2C_ADDRESS)) {
-		printf("Failed to acquire bus access and/or talk to Nucleo\n");
+		perror("Unable to acquire bus access and/or talk to Nucleo");
 		close_fds(2, *fd, *i2c_fd);
 		return -1;
 	}
+
+	// Open log file
+	read_from_logger(*fd, NULL, 0, OPEN);
+	
+	return 0;
 }
 
 void 
@@ -283,9 +295,9 @@ check_serial_number(int fd)
 	char serial_number[10];
 	int c;
 
-	if (!read_from_logger(fd, BOOT_STR, BOOT_TIMEOUT, NONE)
-	    && !write_to_logger(fd, serial_cmd)
-	    && !read_from_logger(fd, serial_line, DEF_TIMEOUT, STORE)) {
+	if (!read_from_logger(fd, BOOT_STR, BOOT_TIMEOUT, NONE) &&
+	    !write_to_logger(fd, serial_cmd) &&
+	    !read_from_logger(fd, serial_line, DEF_TIMEOUT, STORE)) {
 
 		parse_number(serial_line, serial_number);
 		if (serial_number[0] != '\0'){
@@ -321,7 +333,7 @@ read_from_logger(int fd, char *comp_str, float timeout, int flags)
 	int retval;
 	int rx_length;
 	char buf[256];
-	static FILE *fp = NULL;
+	static FILE *log_fp = NULL;
 
 	fd_set rfds;
 	struct timeval tv;
@@ -329,16 +341,15 @@ read_from_logger(int fd, char *comp_str, float timeout, int flags)
 	FD_ZERO(&rfds);		// Clears the file descriptor set
 	FD_SET(fd, &rfds);	// Add fd to the set
 
-	if (fp == NULL) {
-		fp = fopen(LOG_PATH, "wat");
-		if (fp == NULL) {
-			printf("Failed to open log file\n");
+	if (flags & OPEN) {
+		if ((log_fp = fopen(LOG_PATH, "wat")) == NULL) {
+			perror("Unable to open log file");
 			return -1;	
 		}
 	}
 	else if (flags & CLOSE) {
-		fclose(fp);
-		return 0;
+		fclose(log_fp);
+		log_fp = NULL;
 	}
 	tv.tv_sec = 0;
 	tv.tv_usec = (int) (timeout * 1000000);
@@ -352,17 +363,23 @@ read_from_logger(int fd, char *comp_str, float timeout, int flags)
 		else if (FD_ISSET(fd, &rfds)) {
 			rx_length = read(fd, buf, 255);
 		  	buf[rx_length] = '\0';
-
-			fprintf(fp, "%s", buf);
 			
+			if (log_fp != NULL) {
+				fprintf(log_fp, "%s", buf);
+			}		
 			if (flags & PRINT) { 
 				printf("%s", buf);
 			}
+			
+			if (flags & LINE) {
+				strcpy(comp_str, buf);
+				return 0;
+			}
+
 			if (comp_str != NULL) {	
 				char *pch = strstr(buf,comp_str);
-				//printf("comp_str is %s\n", comp_str);
 				if (pch) {
-					if (flags & STORE){
+					if (flags & STORE) {
 						strcpy(comp_str, buf);
 					}
 					return 0;
@@ -410,29 +427,35 @@ get_md5sum(char *md5sum, size_t size)
 	pclose(p);
 }
 
+size_t
+get_file_size(const char *filename)
+{
+	struct stat st;
+
+	stat(filename, &st);
+	return st.st_size;
+}
+
 int 
 flash_check(int fd)
 {
-	int image_size;
+	size_t image_size;
 	char md5c_cmd[100];
 	char md5sum[MD5SUM_HASH_SIZE];
-	struct stat image_stat;
 	
 	flush(fd);
 
-	stat(IMAGE_PATH, &image_stat);
-	image_size = image_stat.st_size;
+	image_size = get_file_size(IMAGE_PATH);
 	snprintf(md5c_cmd, sizeof(md5c_cmd), 
-		 "md5c -f /dev/ifbank1 -e %d\n", image_size);
-	
+		 "md5c -f /dev/ifbank1 -e %d\n", image_size);	
 	get_md5sum(md5sum, sizeof(md5sum));
-	
+
 	if (read_from_logger(fd, BOOT_STR, FLASH_BOOT_TIMEOUT, NONE)) {
 		reset_logger();
 	}	
 
-	if (!write_to_logger(fd, md5c_cmd)
-		&& !read_from_logger(fd, md5sum, MD5SUM_TIMEOUT, NONE )) {
+	if (!write_to_logger(fd, md5c_cmd) &&
+	    !read_from_logger(fd, md5sum, MD5SUM_TIMEOUT, NONE )) {
 
 		print_ok();
 		return 0;
@@ -454,8 +477,7 @@ flash_logger(int fd)
 	snprintf(nucleo_path, sizeof(nucleo_path),
 		 "%s%s", NUCLEO_PATH, "/image.bin");
 
-	printf("\n---------------------\n");
-	
+	printf("\n---------------------\n");	
 	write(1, test_msg, sizeof(test_msg)); 	
 	
 	src_fd = open(IMAGE_PATH, O_RDONLY);		
@@ -503,8 +525,8 @@ mount_fs(int fd)
 		"mount -t vfat /dev/ifbank2r /rsvd\n"
 	};
 	
-	if (write_to_logger(fd, umount_mnt_cmd)
-	    ||write_to_logger(fd, umount_rsvd_cmd)) {
+	if (write_to_logger(fd, umount_mnt_cmd) ||
+	    write_to_logger(fd, umount_rsvd_cmd)) {
 
 		print_error_msg("File system config write failed\n");
 		return -1;
@@ -525,11 +547,11 @@ mock_factory_write(int fd, char *fct_comp_str, char *apn_cmd)
 	char mock_fct_cmd[] = "factory -s 1801001 -r VB1.0 "
 		   	      "-p DL-MINI-BAT36-D2-3G -f\n";
     
-	if (write_to_logger(fd, mock_fct_cmd) 
-	    || read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) 
-	    || write_to_logger(fd, apn_cmd)
-	    || write_to_logger(fd, "factory -c\n") 
-	    || read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)) {
+	if (write_to_logger(fd, mock_fct_cmd) || 
+	    read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) ||
+	    write_to_logger(fd, apn_cmd) ||
+	    write_to_logger(fd, "factory -c\n") || 
+	    read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)) {
 
 		//printf("Probably DUT is in sleep mode\n");
 		print_error_msg("Mock factory config write failed\n");
@@ -593,80 +615,147 @@ measure_voltage(int fd, int i2c_fd)
 	}
 }
 
+// Get SIM params using cu and AT commands
+int
+AT_sim(int fd, struct logger *logger)
+{
+	char imsi_cmd[] = "AT+CIMI\n";
+	char ccid_cmd[] = "AT+CCID\n";
+	char rev_cmd[] = "ATI\n";
+	char ccid_str[30] = "CCID:";
+	char imsi_str[30] = {0};
+	char rev_str[30] = "Revision";
+
+	if (write_to_logger(fd, "cu\n") ||
+	    write_to_logger(fd, ccid_cmd) || 
+	    read_from_logger(fd, ccid_str, DEF_TIMEOUT, STORE) ||
+	    read_from_logger(fd, "OK", DEF_TIMEOUT, NONE) ||
+	    write_to_logger(fd, imsi_cmd) ||
+	    read_from_logger(fd, imsi_str, DEF_TIMEOUT, LINE) ||
+	    read_from_logger(fd, imsi_str, DEF_TIMEOUT, LINE)) {
+	   
+		print_error_msg("Failed reading IMSI and CCID number\n");	
+	} else {	
+		parse_number(imsi_str, logger->imsi);
+		parse_number(ccid_str, logger->ccid);
+	}
+
+	if (write_to_logger(fd, rev_cmd) ||
+	    read_from_logger(fd, rev_str, DEF_TIMEOUT, STORE)) {
+
+		print_error_msg("Failed reading module revision\n");
+	} else {
+		char *pch = strstr(rev_str, ":");
+		int i;	
+		
+		*pch++;
+		for (i = 0; *pch != '\r'; i++) {
+			logger->module_rev[i] = *pch++;
+		}
+		logger->module_rev[i] = '\0';
+	}
+}
+
+// Get SIM params using qftpc command
 void
-get_sim_info(int fd, char *imsi, char *ccid, char *module_rev, int module)
-{	
+qftpc_sim(int fd, struct logger *logger)
+{
 	char imsi_str[20] = "IMSI";
 	char ccid_str[30] = "CCID:";
-	char rev_str[30] = "Revision";
 	char qftpc_gsm[] = "qftpc -j -e 0 -b 0\n";
 	char qftpc_nbiot[] = "qftpc -j -e 5 -b 10\n";
 	char *qftpc_cmd = qftpc_gsm;
+	char rev_str[30] = "Revision";
+	char mod_rev_cmd[100];
 	int timeout = QFTPC_TIMEOUT;
-
+	
 	// If module is NB-IoT, use NB-IoT timeout and command
-	if (module |= NBIOT) {
+	if (logger->module & NBIOT) {
 		qftpc_cmd = qftpc_nbiot;
 		timeout = NBIOT_TIMEOUT;
 	}
-
-	if (write_to_logger(fd, qftpc_cmd)
-    	    || read_from_logger(fd, imsi_str, timeout, STORE)
-	    || read_from_logger(fd, ccid_str, QFTPC_TIMEOUT, STORE)) {
+	
+	if (write_to_logger(fd, qftpc_cmd) ||
+    	    read_from_logger(fd, imsi_str, timeout, STORE) ||
+	    read_from_logger(fd, ccid_str, QFTPC_TIMEOUT, STORE)) {
 	
 		print_error_msg("Failed reading IMSI and CCID number\n");	
 		
 	} else {
-		parse_number(imsi_str, imsi);
-		parse_number(ccid_str, ccid);
+		parse_number(imsi_str, logger->imsi);
+		parse_number(ccid_str, logger->ccid);
 	}
-	if (write_to_logger(fd, "qftpc -v -e 0 -b 0\n")
-	    || read_from_logger(fd, rev_str, QFTPC_TIMEOUT, STORE)) {
+
+	snprintf(mod_rev_cmd, sizeof(mod_rev_cmd), "qftpc -v -e 0 -b 0\n"); 
+	
+	if (write_to_logger(fd, mod_rev_cmd) ||
+	    read_from_logger(fd, rev_str, QFTPC_TIMEOUT, STORE)) {
 
 		print_error_msg("Failed reading module revision\n");
 	} else {
-		int i;
 		char *pch = strstr(rev_str, ":");
-	
+		int i;	
+
 		*pch++;
-		for (i = 0; *pch != '\0'; i++) {
-			module_rev[i] = *pch++;
+		for (i = 0; *pch != '\r'; i++) {
+			logger->module_rev[i] = *pch++;
 		}
-		module_rev[i] = '\0';
+		logger->module_rev[i] = '\0';
+	}
+}
+
+void
+get_sim_info(int fd, struct logger *logger)
+{	
+	char soft_ver[10];
+
+	/* If software version is 0.4.27 use cu and AT commands to get SIM
+	 * parameters. Thereafter discharge cap, reset device to exit from
+	 * cu. 
+	*/
+	read_soft_ver(fd, soft_ver);
+	if ((logger->module & GSM) && !strcmp("0.4.27", soft_ver)) {
+		AT_sim(fd, logger);
+		digitalWrite(PWR, LOW);
+		discharge_cap(10);
+		reset_logger();
+	} else {
+		qftpc_sim(fd,logger);
 	}
 }
 
 int
-gsm_test(int fd, int i2c_fd, char *apn, char *imsi,
-	 char *ccid, char *module_rev)
+gsm_test(int fd, int i2c_fd, struct logger *logger)
 {	
 	int err = 0;
 	char response;
+	char umts_boot_str[] = "WARNING: Pins are set!";
 	char bd_comp_str[] = "Successfully changed baud rate";
 	char ping_comp_str[] = "Successfully ping host";
 	char test_msg[] = "Module test -    ";
 	char error_msg[] = "ERROR UMTS:";
 	char qftpc_cmd[200];
 	char bd_cmd[] = "modem_config -d /dev/ttyS0 -g 1 "
-			"-ar 9600 -e 15 -b 20\n";
+			"-ar 9600 -e 10 -b 20\n";
 	char mondis_ip[] = "10.210.9.3";
 	char google_ip[] = "8.8.8.8";
 	char *ip = google_ip;
 	
-	if (!strcmp(apn, "cp-mondis")) {
+	if (!strcmp(logger->apn, "cp-mondis")) {
 		ip = mondis_ip;
 	}
 
 	// Compose qftpc command for setting APN and ping
 	snprintf(qftpc_cmd, sizeof(qftpc_cmd), 
-		 "qftpc -a %s -e 0 -b 20 -i %s\n", apn, ip);
+		 "qftpc -a %s -e 0 -b 20 -i %s\n", logger->apn, ip);
 
 	printf("\n---------------------\n");
 	printf("Setting GSM module, please wait 1 minute...\n");
 
 	// Boot module, change baud rate and set modem G mode
-	if (!write_to_logger(fd, bd_cmd)
-	    && !read_from_logger(fd, bd_comp_str, UMTS_TIMEOUT, PRINT)) {
+	if (!write_to_logger(fd, bd_cmd) &&
+	    !read_from_logger(fd, bd_comp_str, UMTS_BAUD_TIMEOUT, NONE) &&
+	    !read_from_logger(fd, umts_boot_str, UMTS_BOOT_TIMEOUT, NONE)) {
 
 		printf("Baud rate changed successfully\n");
 	} else { 
@@ -680,11 +769,11 @@ gsm_test(int fd, int i2c_fd, char *apn, char *imsi,
 	}
 	
 	// Get SIM card parameters - IMSI, CCID - and the module revision
-	get_sim_info(fd, imsi, ccid, module_rev, GSM);
-	
+	get_sim_info(fd, logger);
+
 	// AT commands
-	if (write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n")
-	    ||write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n")) {
+	if (write_to_logger(fd, "echo \"AT&F\" > /dev/ttyS0\n") ||
+	    write_to_logger(fd, "echo \"AT+CFUN=1,1\" > /dev/ttyS0\n")) {
 
 		print_error_msg("Error writing AT commands\n");
 		return -1;
@@ -701,12 +790,12 @@ gsm_test(int fd, int i2c_fd, char *apn, char *imsi,
 //		err = 1 - err;	
 //	}
 //	else 
-	if (!read_from_logger(fd, ping_comp_str, PING_TIMEOUT, PRINT)) {
+	if (!read_from_logger(fd, ping_comp_str, PING_TIMEOUT, NONE)) {
 		print_ok();
 		return 0;
 	}
-
-	write_to_logger(fd, "reset\n");
+	
+	write_to_logger(fd, "\nreset\n");
 	print_fail();
 	flush(fd);
 
@@ -717,16 +806,14 @@ gsm_test(int fd, int i2c_fd, char *apn, char *imsi,
 		printf("Retest GSM? [y/n] ");
 		scanf(" %c", &response);
 		if (response == 'y' || response == 'Y') {
-			return gsm_test(fd, i2c_fd, apn, imsi,
-					   ccid, module_rev);
+			return gsm_test(fd, i2c_fd, logger);
 		}
 	}
 	return -1;
 }
 
 int
-nbiot_test(int fd, int i2c_fd, char *apn, char *imsi,
-	   char *ccid, char *module_rev)
+nbiot_test(int fd, int i2c_fd, struct logger *logger)
 {	
 	char ping_comp_str[] = "Successfully ping host";
 	char autocon_cmp_str[] = "AUTOCONNECT,FALSE";
@@ -736,14 +823,14 @@ nbiot_test(int fd, int i2c_fd, char *apn, char *imsi,
 	char ip[] = "8.8.8.8";
 	
 	snprintf(ping_cmd, sizeof(ping_cmd), 
-		 "qftpc -a %s -e 5 -b 10 -i %s\n", apn, ip);
+		 "qftpc -a %s -e 5 -b 10 -i %s\n", logger->apn, ip);
 
 	printf("\n---------------------\n");
 	printf("Setting NB-IoT module, please wait %d seconds...\n",
 		NBIOT_TIMEOUT);
 
 	//Get SIM card parameters - IMSI, CCID - and the module revision
-	get_sim_info(fd, imsi, ccid, module_rev, NBIOT);
+	get_sim_info(fd, logger);
 	
 	// Check VCCGSM
 	if (measure_voltage(fd, i2c_fd)) {
@@ -751,8 +838,8 @@ nbiot_test(int fd, int i2c_fd, char *apn, char *imsi,
 	}
 	
 	//Disable autoconnect option
-	if (write_to_logger(fd, autocon_cmd)
-	    || read_from_logger(fd, autocon_cmp_str, AUTOCON_TIMEOUT, NONE)) {
+	if (write_to_logger(fd, autocon_cmd) ||
+	    read_from_logger(fd, autocon_cmp_str, AUTOCON_TIMEOUT, NONE)) {
 
 		write_to_logger(fd, "reset\n");
 		print_error_msg("Error while removing autoconnect\n");
@@ -808,8 +895,8 @@ inputs_config(int fd)
 	}
 	for (int i = 0; i < sizeof(cfg) / sizeof(cfg[0]) ; i++) {
 		sprintf(line, "printf \"%s\" >> /mnt/conf.cfg\n", cfg[i]);	
-		if (write_to_logger(fd, line)
-		    || write_to_logger(fd, new_line)) {
+		if (write_to_logger(fd, line) ||
+		    write_to_logger(fd, new_line)) {
 
 			print_error_msg("Inputs config write failed\n");
 			return -1;
@@ -829,8 +916,8 @@ generate_pulses(int fd, int i2c_fd)
 	char test_msg[] = "Inputs test -    ";
 
 	printf("Starting alarm\n");
-	if (write_to_logger(fd, "alarm -f\n")
-	    || read_from_logger(fd, alarm_str, ALARM_TIMEOUT, NONE)) {    
+	if (write_to_logger(fd, "alarm -f\n") ||
+	    read_from_logger(fd, alarm_str, ALARM_TIMEOUT, NONE)) {    
 		print_error_msg("Error while starting alarm\n");
 		return -1;
 	}
@@ -840,12 +927,10 @@ generate_pulses(int fd, int i2c_fd)
 	write(i2c_fd, buf, strlen(buf));
 	sleep(1); // Wait for Nucleo to generate pulses	
 
-	if (!write_to_logger(fd, "cat /dev/lptim1\n") 
-	    && !read_from_logger(fd, LPTIM1_PULSES, 
-				 PULSE_TIMEOUT, NONE) 
-	    && !write_to_logger(fd, "cat /dev/lptim2\n") 
-	    && !read_from_logger(fd, LPTIM2_PULSES,
-				 PULSE_TIMEOUT, NONE)) {
+	if (!write_to_logger(fd, "cat /dev/lptim1\n") &&
+	    !read_from_logger(fd, LPTIM1_PULSES, PULSE_TIMEOUT, NONE) && 
+	    !write_to_logger(fd, "cat /dev/lptim2\n") &&
+	    !read_from_logger(fd, LPTIM2_PULSES, PULSE_TIMEOUT, NONE)) {
 
 		print_ok();
 		return 0;				
@@ -863,13 +948,16 @@ inputs_test(int fd, int i2c_fd)
 }
 
 int 
-reed_test(int fd) 
+reed_test(int fd, int module) 
 {
 	char test_msg[] = "Reed test -    ";
-	//char alarm_str[] ="AT+QPOWD=1";
-	char sleep_str[] = "Send time";
+	char sleep_str[] ="AT+QPOWD=1"; 	//Comprase string for GSM
 	char reed_str[] = "Reed clicked for 3s.";
-	
+
+	if (module  == NBIOT) {
+		strcpy(sleep_str, "Send time");
+	}	
+
 	flush(fd);	
 	printf("\n---------------------\n");
 	printf("Wait for DUT to enter sleep mode...\n");
@@ -884,7 +972,7 @@ reed_test(int fd)
 			print_ok();
 			write_to_logger(fd, "reset\n");
 			return read_from_logger(fd, BOOT_STR,
-							BOOT_TIMEOUT, NONE);
+						BOOT_TIMEOUT, NONE);
 		} else { 
 			digitalWrite(REED, LOW);
 			print_fail();
@@ -930,19 +1018,21 @@ setup_mysql(MYSQL *con)
 void
 insert_serial_number(char *serial_number)
 {
+	char input[255] = {0};
+
 	do {
-		if (*serial_number) {
-			printf("Serial number must be less then "
-			       "10 characters long\n\n");
+		if (*input) {
+			printf("Serial number must be 10 or less "
+			       "characters long\n\n");
 		}
 		printf("Enter serial number: ");
-		scanf("%s", serial_number);
-	} while (strlen(serial_number) > 10);
+		scanf("%s", input);
+	} while (strlen(input) > 10);
+	strcpy(serial_number, input);
 }
 
 int 
-database_insert(char *ser_num, char *hard_rev, char *prod_num, char *soft_ver,
-		char *imsi, char *ccid, char *mod_rev)
+database_insert(struct logger *logger)
 {
 	MYSQL *con = mysql_init(NULL);
 	char query[255];
@@ -950,9 +1040,10 @@ database_insert(char *ser_num, char *hard_rev, char *prod_num, char *soft_ver,
 
 	setup_mysql(con);
 	snprintf(query, sizeof(query),
-		 "Insert into %s values('%s', '%s', '%s', '%s', "
-		 "'%s', '%s', '%s', CURTIME())", DB_TABLE, ser_num,  
-		 hard_rev, prod_num, soft_ver, imsi, ccid, mod_rev);	
+		 "INSERT INTO %s values('%s', '%s', '%s', '%s', '%s', '%s', "
+		 "'%s', UNIX_TIMESTAMP())", DB_TABLE, logger->ser_num,  
+		 logger->hard_rev,logger-> prod_num, logger->soft_ver,
+		 logger->imsi, logger->ccid, logger->module_rev);
 	if (mysql_query(con, query)) {
 		fprintf(stderr, "%s\n", mysql_error(con));
 		mysql_close(con);
@@ -960,49 +1051,46 @@ database_insert(char *ser_num, char *hard_rev, char *prod_num, char *soft_ver,
 	}		
 	
 	id = mysql_insert_id(con);
-	snprintf(ser_num, 11, "%lu", id);
+	snprintf(logger->ser_num, 11, "%lu", id);
 
 	mysql_close(con);	
 	return 0;	
 }
 
 int 
-factory_write(int fd, char *fct_comp_str, char *apn_cmd, char *hard_rev,
-	      char *prod_num, char *imsi, char *ccid,char *module_rev,
+factory_write(int fd, char *fct_comp_str, char *apn_cmd, struct logger *logger,
 	      int manual_flag) 
 {	
 	char fct_cmd[100];
-	char ser_num[11] = {0};
-	char soft_ver[20] = {0};
 
 	printf("\n---------------------\n");
 
 	//Get serial version
 	if (manual_flag){
-		insert_serial_number(ser_num);
+		insert_serial_number(logger->ser_num);
 	}
 	//Get software version
-	if (soft_ver_check(fd, soft_ver)) {
+	if (check_soft_ver(fd, logger->soft_ver)) {
 		return -1;
 	}
-	if (database_insert(ser_num, hard_rev, prod_num, soft_ver, imsi,
-			    ccid, module_rev)) {
+	//Insert into database
+	if (database_insert(logger)) {
 		print_error_msg("Database write failed\n");
 		return -1;
 	}
 
 	sprintf(fct_cmd, "factory -s %s -r %s -p %s -f\n",
-		ser_num, hard_rev, prod_num);
+		logger->ser_num, logger->hard_rev, logger->prod_num);
 	flush(fd);
 
-	if (!write_to_logger(fd, fct_cmd) 
-	    && !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) 
-	    && !write_to_logger(fd, apn_cmd) 
-	    && !write_to_logger(fd, "factory -c\n") 
-	    && !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)) {
+	if (!write_to_logger(fd, fct_cmd) && 
+	    !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE) &&
+	    !write_to_logger(fd, apn_cmd) &&
+	    !write_to_logger(fd, "factory -c\n") &&
+	    !read_from_logger(fd, fct_comp_str, FACTORY_TIMEOUT, NONE)) {
 
 		printf("Factory config successfully written\n");
-		printf("Inserted serial number is %s\n", ser_num);
+		printf("Inserted serial number is %s\n", logger->ser_num);
 		sleep(1);
 		return 0;	
 	}
@@ -1012,29 +1100,131 @@ factory_write(int fd, char *fct_comp_str, char *apn_cmd, char *hard_rev,
 	}
 }
 
+int
+read_soft_ver(int fd, char *soft_ver)
+{
+	char uname_str[50] = "NuttX/Smartcom";
+	
+	if (write_to_logger(fd, "uname -a\n") ||
+	    read_from_logger(fd, uname_str, DEF_TIMEOUT, STORE)) {
+		print_error_msg("Error while reading software version\n");
+		return -1;
+	}
+	
+	sscanf(uname_str, "%*s %s", soft_ver);
+	return 0;
+}
+
 int 
-soft_ver_check(int fd, char *soft_ver)
+check_soft_ver(int fd, char *soft_ver)
 {
 	char uname_str[50] = "NuttX/Smartcom";
 	char *pch;
 
-	if (write_to_logger(fd, "uname -a\n")
-	    || read_from_logger(fd, uname_str, DEF_TIMEOUT, STORE)) {
-
-		print_error_msg("Error while reading software version\n");
+	if (read_soft_ver(fd, soft_ver)) {
 		return -1;
 	}
-	sscanf(uname_str, "%*s %s", soft_ver);
-	
+
 	pch = strstr(IMAGE_PATH, soft_ver);
 	if (pch == NULL){
 		printf("\nSoftware version and image name don't match, "
 		       "software version is %s\n", soft_ver);
 	}
+
 	flush(fd);
 	return 0;
 }
 
+int
+read_UID(int fd, char *UID)
+{
+	char UID_str[50] = "UID";
+	char *pch;
+	int i;
+
+	if (write_to_logger(fd, "reset\n") ||
+	    read_from_logger(fd, UID_str, RESET_TIMEOUT, STORE)) {
+
+			print_error_msg("Failed reading UID\n");
+			return -1;
+	}
+		
+	pch = strstr(UID_str, " ");
+	*pch++;
+	for (i = 0; *pch != '\r' ; i++) {
+		UID[i] = *pch++;
+	}	
+	UID[i] = '\0';
+	return 0;
+}
+
+void
+log_into_db(int fd)
+{	
+	int log_fd, i;
+	unsigned long uid_length;
+	unsigned long log_length;
+	size_t filesize;
+	char *log, *statement, UID[50];	
+	MYSQL *con;
+	MYSQL_STMT *stmt;
+	MYSQL_BIND bind[2];
+
+	filesize = get_file_size(LOG_PATH);
+
+	if ((log_fd = open(LOG_PATH, O_RDONLY)) == -1) {
+		perror("Unable to open log file");
+		return;
+	}
+	log = (char *)mmap(NULL, filesize, PROT_READ, MAP_SHARED, log_fd, 0);
+	if (log == MAP_FAILED) {
+		perror("Unable to map log file");
+		close(log_fd);
+		return;
+	}
+	
+	if (read_UID(fd, UID)) {
+		close(log_fd);
+		return;	
+	}
+
+	con = mysql_init(NULL);
+	setup_mysql(con);
+	stmt = mysql_stmt_init(con);
+	memset(bind, 0, sizeof(bind));
+
+	uid_length = strlen(UID);
+	log_length = strlen(log);
+	statement = "INSERT INTO `failed_devices` (`UID`,`log`," 
+		    "`submission_date`) values(?,?,UNIX_TIMESTAMP())";	
+	mysql_stmt_prepare(stmt, statement, strlen(statement));
+
+	bind[0].buffer_type = MYSQL_TYPE_STRING;
+        bind[0].buffer = UID;
+	bind[0].buffer_length = sizeof(UID);
+        bind[0].is_null = 0;
+        bind[0].length = &uid_length;
+
+        bind[1].buffer_type = MYSQL_TYPE_STRING;
+        bind[1].buffer = log;
+        bind[1].buffer_length = sizeof(log);
+        bind[1].is_null = 0;
+        bind[1].length = &log_length;
+
+	mysql_stmt_bind_param(stmt, bind);
+	if (mysql_stmt_execute(stmt)) {
+		fprintf(stderr, "%s\n", mysql_error(con));
+	}
+
+	int unmap=munmap(log, filesize);
+	if (unmap == -1) {
+		perror("Unable to munmap");
+	}
+
+	mysql_stmt_close(stmt);
+	mysql_close(con);
+	close(log_fd);
+}
 
 void 
 print_ok()
@@ -1058,6 +1248,14 @@ print_error_msg(char *err_msg)
 	printf("\033[0m");
 }
 
+void
+discharge_cap(int disch_time)
+{
+	digitalWrite(CAP, HIGH);
+	sleep(disch_time);
+	digitalWrite(CAP, LOW);
+}
+
 void 
 power_off(int disch_time)
 {
@@ -1065,11 +1263,9 @@ power_off(int disch_time)
 	digitalWrite(JMP, LOW);
 	digitalWrite(REED, LOW);
 	if (disch_time > 0){
-		digitalWrite(CAP, HIGH);
 		printf("\nWait %d seconds for cap to discharge\n", disch_time);
-		sleep(disch_time);
+		discharge_cap(disch_time);
 	}
-	digitalWrite(CAP, LOW);
 }
 
 void
@@ -1119,16 +1315,19 @@ void
 end_test(int fd, int i2c_fd, int cap_time, int test_result, time_t *start)
 {
 	read_from_logger(fd, NULL, 0, CLOSE); 
-	close_fds(2, fd, i2c_fd);
-	power_off(cap_time);
 	
 	if (!test_result) {
 		print_error_msg("Test failed\n");
+		log_into_db(fd);
+		close_fds(2, fd, i2c_fd);
+		power_off(cap_time);
 		return;
 	}
-
+	
+	close_fds(2, fd, i2c_fd);
+	power_off(cap_time);
 	double test_time = calculate_time(start);
-	int seconds = (int) test_time % 60;
+	int seconds = (int)test_time % 60;
 	int minutes = (test_time - seconds) / 60;
 
 	printf("\n---------------------\n");

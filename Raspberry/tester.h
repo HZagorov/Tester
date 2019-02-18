@@ -9,12 +9,11 @@
 #define FAILURE		0
 #define SUCCESS		1
 #define BOOT_STR	"NuttShell"
-#define DEF_APN		"mtm.tag.com"
+#define DEF_APN		"internet.vivacom.bg" /*"mtm.tag.com"*/
 #define CAP_DISCH_TIME	30
 #define NO_DISCH	0
 #define LPTIM1_PULSES	"96"
 #define LPTIM2_PULSES	"95"
-#define LOG_PATH	"/home/pi/sourceCodes/tester/Logs/log.txt"
 
 //Test flags
 #define T_FLASH		0x01
@@ -28,25 +27,30 @@
 #define NONE		0x00
 #define PRINT 		0x01	//print what's read
 #define STORE 		0x02	//store the matched string from read()
-#define CLOSE		0x04	//close log file pointer
+#define OPEN		0x04	//close log file pointer
+#define CLOSE		0x08
+#define LINE		0x10
 
 //Module flags
 #define GSM		0x01
 #define NBIOT		0x02
-//Programming macros
+
+//File paths
 #define IMAGE_PATH	"/home/pi/sourceCodes/tester/Images/" \
-			"DL-MINI-BAT36-D2-NB-VB1.0-0.5.0-15-g50983ce8.bin"
-			//"DL-MINI-BAT36-D2-3G-VB1.0-0.5.0.1.bin"
+			"DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin"
+			//"DL-MINI-BAT36-D2-NB-VB1.0-0.5.0.1.bin"
+#define LOG_PATH	"/home/pi/sourceCodes/tester/Logs/log.txt"
+
 //Factory macros
 #define DEF_HARD_REV	"VB1.0"
-#define DEF_PROD_NUM	"DL-MINI-BAT36-D2-NB"
+#define DEF_PROD_NUM	"DL-MINI-BAT36-D2-3G"
 
 //Database macros
-#define DB_SERVER	"193.178.153.55"
-#define DB_USER		"tester"
-#define DB_PASS		"a7b221d165cb780e5e8fa804ce29dfc5"
-#define DATABASE	"datalogger"
-#define DB_TABLE	"tester"
+#define DB_SERVER	"localhost"	/*"193.178.153.55"*/
+#define DB_USER		"raspberry"	/*"tester"*/
+#define DB_PASS		"smartcom"	/*"a7b221d165cb780e5e8fa804ce29dfc5"*/
+#define DATABASE	"tester"	/*"datalogger"*/
+#define DB_TABLE	"test"		/*"tester"*/
 
 //Device macros
 #define NUCLEO_PATH	"/media/pi/NODE_L476RG"
@@ -67,20 +71,34 @@
 #define FLUSH_TIMEOUT 1
 #define BOOT_TIMEOUT 2
 #define FLASH_BOOT_TIMEOUT 20
-#define MD5SUM_TIMEOUT 2
+#define MD5SUM_TIMEOUT 	2
 #define FACTORY_TIMEOUT 2
-#define UMTS_TIMEOUT 40
+#define UMTS_BAUD_TIMEOUT 40
+#define UMTS_BOOT_TIMEOUT 5
 #define UMTS_ERROR_TIMEOUT 30
-#define PING_TIMEOUT 90
-#define QFTPC_TIMEOUT 3
-#define NBIOT_TIMEOUT 20
+#define PING_TIMEOUT 	90
+#define QFTPC_TIMEOUT 	3
+#define NBIOT_TIMEOUT 	20
 #define AUTOCON_TIMEOUT 1
 #define INPUTS_CONF_SLEEP 0.5
-#define SLEEP_TIMEOUT 180 //120
-#define EM_TIMEOUT 15	//electromagnet timeout
+#define SLEEP_TIMEOUT 	200	//180 	//120
+#define EM_TIMEOUT 	15	//electromagnet timeout
 #define REED_CHECK_TIMEOUT 20 
-#define ALARM_TIMEOUT 2
-#define PULSE_TIMEOUT 0.5
+#define ALARM_TIMEOUT 	2
+#define PULSE_TIMEOUT 	0.5
+#define RESET_TIMEOUT 	3
+
+struct logger {
+	int module;
+	char *apn;
+	char *hard_rev;
+	char soft_ver[20];
+	char *prod_num;
+	char ser_num[10];
+	char imsi[50];
+	char ccid[50];
+	char module_rev[50];
+};
 
 void power_devices();
 int get_available_space(char *path);
@@ -94,34 +112,35 @@ void flush(int fd);
 void begin_test(time_t *start);
 
 void get_md5sum(char *md5sum, size_t size);
+size_t get_file_size(const char *filename);
 int flash_check(int fd);
 int flash_logger(int fd);
 int mount_fs(int fd);
 int mock_factory_write(int fd, char *fct_comp_str, char *apn);
 int led_test(int fd);
 int measure_voltage(int fd, int i2c_fd);
-void get_sim_info(int fd, char *imsi, char *ccid, char *module_rev, int module);
-int gsm_test(int fd, int i2c_fd, char *apn, char *imsi,
-	     char *ccid, char *module_rev);
-int nbiot_test(int fd, int i2c_fd, char *apn, char *imsi,
-		char *ccid, char *module_rev);
+void get_sim_info(int fd, struct logger *logger);
+int gsm_test(int fd, int i2c_fd, struct logger *logger);
+int nbiot_test(int fd, int i2c_fd, struct logger *logger);
 int inputs_config(int fd);
 int generate_pulses(int fd, int i2c_fd);
 int inputs_test(int fd, int i2c_fd);
-int reed_test(int fd);
+int reed_test(int fd, int module);
 int setup_mysql(MYSQL *con);
 void insert_serial_number(char *serial_number);
-int database_insert(char *ser_num, char *hard_rev, char *prod_num,
-		    char *soft_ver, char *imsi, char *ccid, char *mod_rev);
-int factory_write(int fd, char *fct_comp_str, char *apn, char *hard_rev,
-		  char *prod_num, char *imsi, char *ccid, char *module_rev,
-		  int manual_flag);
-int soft_ver_check(int fd, char *soft_ver);
+int database_insert(struct logger *logger);
+int factory_write(int fd, char *fct_comp_str, char *apn_cmd,
+	       	  struct logger *logger, int manual_flag);
+int read_soft_ver(int fd, char *soft_ver);
+int check_soft_ver(int fd, char *soft_ver);
+int read_UID(int fd, char *UID);
+void log_into_db(int fd);
 
 void print_ok();
 void print_fail();
 void print_error_msg(char *err_msg);
 void close_fds(int fd_count, ...);
+void discharge_cap(int disch_time);
 void power_off(int disch_time);
 double calculate_time(time_t *start);
 void reset_logger();

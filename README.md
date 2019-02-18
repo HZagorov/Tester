@@ -48,7 +48,7 @@ For separate module testing use the following options
 ```
 
 Note that when in faultless mode the database insertion is omitted.
-For example if you want to flash the DUT, test the communication module, manually write serial number and insert module parameters to database:
+For example if you want to flash the DUT, test the communication module, manually write serial number and insert module parameters to database, use:
 ```
 tester -f -m -d -s 
 ```
