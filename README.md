@@ -31,7 +31,7 @@ The default testing program is for GSM module. If the device is NB-IoT use the -
 tester -n
 ```
 
-For faultless test without interrupting or stopping use the -e option
+For faultless testing, without interrupting or stopping the program when test failures occurre, use the -e option
 ```
 tester -e
 ```
