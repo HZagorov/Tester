@@ -20,7 +20,7 @@ To compile the tester.c program run the following compile command
 ```
 gcc -o tester tester.c -lwiringPi `mysql_config --libs`
 ```
-
+## Usage
 To run the tester program write
 ```
 tester 
@@ -47,8 +47,21 @@ For separate module testing use the following options
 -d Write serial number and module parameters to database
 ```
 
+The following options are used to provide device specific information
+```
+-a APN
+-h hardware revision
+-p product number 
+```
+
+Use the -b option to provide the path to the image file for writing 
+```
+tester -b Images/DL-MINI-BAT36-D2-3G-VB1.0-0.4.27.bin
+```
+
 Note that when in faultless mode the database insertion is omitted.
 For example if you want to flash the DUT, test the communication module, manually write serial number and insert module parameters to database, use:
 ```
 tester -f -m -d -s 
 ```
+Use -h for help.
